@@ -4,6 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:robot_control_app/app.dart';
 import 'package:robot_control_app/core/config/app_config.dart';
 import 'package:robot_control_app/core/theme/theme_provider.dart';
+import 'package:robot_control_app/services/robot_service.dart';
+
+import 'fixture_api_client.dart';
 
 void main() {
   test('default configuration points to the local API', () {
@@ -30,11 +33,22 @@ void main() {
     expect(container.read(themeProvider), ThemeMode.dark);
   });
 
-  testWidgets('bottom navigation switches between feature screens', (tester) async {
-    await tester.pumpWidget(const ProviderScope(child: RobotControlApp()));
+  testWidgets('bottom navigation switches between feature screens', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          robotServiceProvider.overrideWithValue(
+            RobotService(FixtureApiClient()),
+          ),
+        ],
+        child: const RobotControlApp(),
+      ),
+    );
     await tester.pumpAndSettle();
 
-    expect(find.text('Overview'), findsOneWidget);
+    expect(find.text('System status'), findsOneWidget);
     expect(find.byType(NavigationBar), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.directions_walk_outlined));
