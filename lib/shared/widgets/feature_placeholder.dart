@@ -38,3 +38,4 @@ class FeaturePlaceholder extends StatelessWidget {
           ),
         ),
       );
+}
