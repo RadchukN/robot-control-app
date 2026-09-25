@@ -33,9 +33,11 @@ void main() {
     expect(container.read(themeProvider), ThemeMode.dark);
   });
 
-  testWidgets('bottom navigation switches between feature screens', (
+  testWidgets('compact shell navigation opens the control destination', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -48,23 +50,77 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('System status'), findsOneWidget);
+    expect(find.text('Robot overview'), findsOneWidget);
     expect(find.byType(NavigationBar), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.directions_walk_outlined));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.byIcon(Icons.sports_esports_outlined),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.text('Motion is ready for integration'), findsOneWidget);
+  });
 
-    await tester.tap(find.byIcon(Icons.graphic_eq_outlined));
-    await tester.pumpAndSettle();
-    expect(find.text('Audio is ready for integration'), findsOneWidget);
+  testWidgets('Dashboard fits all Figma reference viewports', (tester) async {
+    for (final size in const [
+      Size(390, 844),
+      Size(768, 1024),
+      Size(1440, 960),
+    ]) {
+      await tester.binding.setSurfaceSize(size);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            robotServiceProvider.overrideWithValue(
+              RobotService(FixtureApiClient()),
+            ),
+          ],
+          child: const RobotControlApp(),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.visibility_outlined));
-    await tester.pumpAndSettle();
-    expect(find.text('Vision is ready for integration'), findsOneWidget);
+      expect(find.text('Robot overview'), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'Viewport: $size');
 
-    await tester.tap(find.byIcon(Icons.settings_outlined));
-    await tester.pumpAndSettle();
-    expect(find.text('Appearance'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+    await tester.binding.setSurfaceSize(null);
+  });
+
+  testWidgets('AI Workspace fits all Figma reference viewports', (
+    tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    for (final size in const [
+      Size(390, 844),
+      Size(768, 1024),
+      Size(1440, 960),
+    ]) {
+      await tester.binding.setSurfaceSize(size);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            robotServiceProvider.overrideWithValue(
+              RobotService(FixtureApiClient()),
+            ),
+          ],
+          child: const RobotControlApp(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.auto_awesome_outlined).first);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('ai-workspace-screen')), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'Viewport: $size');
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
   });
 }

@@ -3,6 +3,7 @@ import 'package:robot_control_app/core/api/api_client.dart';
 import 'package:robot_control_app/core/api/api_providers.dart';
 import 'package:robot_control_app/models/health_response.dart';
 import 'package:robot_control_app/models/motion_summary.dart';
+import 'package:robot_control_app/models/motion_info.dart';
 import 'package:robot_control_app/models/project_manifest.dart';
 import 'package:robot_control_app/models/runtime_status_response.dart';
 import 'package:robot_control_app/models/service_info.dart';
@@ -29,6 +30,10 @@ class RobotService {
 
   Future<MotionSummary> motionSummary() async =>
       MotionSummary.fromJson(await _apiClient.getJson('/motion/summary'));
+
+  Future<List<MotionInfo>> motions() async => (await _apiClient.getJsonList(
+    '/motion',
+  )).map(MotionInfo.fromJson).toList(growable: false);
 }
 
 final robotServiceProvider = Provider<RobotService>(

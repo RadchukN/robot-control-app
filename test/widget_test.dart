@@ -57,46 +57,44 @@ void main() {
     expect(http.statusCode, 503);
   });
 
-  testWidgets('Dashboard renders live data and refreshes automatically', (
-    tester,
-  ) async {
-    final client = FixtureApiClient();
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          robotServiceProvider.overrideWithValue(RobotService(client)),
-        ],
-        child: const MaterialApp(home: DashboardScreen()),
-      ),
-    );
-    await tester.pumpAndSettle();
+  testWidgets(
+    'Dashboard renders the Figma sections and refreshes automatically',
+    (tester) async {
+      final client = FixtureApiClient();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            robotServiceProvider.overrideWithValue(RobotService(client)),
+          ],
+          child: const MaterialApp(home: DashboardScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('Online'), findsOneWidget);
-    expect(find.text('running'), findsOneWidget);
-    expect(find.text('medza'), findsOneWidget);
-    expect(find.text('1.2.3'), findsOneWidget);
-    expect(find.text('3.12'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('Motion'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-    expect(find.text('Motion'), findsOneWidget);
-    expect(find.text('Audio'), findsOneWidget);
-    expect(find.text('Vision'), findsOneWidget);
-    expect(find.text('Controller'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('Services'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-    expect(find.text('Services'), findsOneWidget);
-    expect(client.requests.where((path) => path == '/health').length, 1);
+      expect(find.text('Dashboard'), findsOneWidget);
+      expect(find.text('G1 Gustav'), findsOneWidget);
+      expect(find.text('Connected'), findsOneWidget);
+      expect(find.text('Safety nominal'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('Active mission'),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Active mission'), findsOneWidget);
+      expect(find.text('Quick actions'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('Recent activity'),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Recent activity'), findsOneWidget);
+      expect(client.requests.where((path) => path == '/health').length, 1);
 
-    await tester.pump(const Duration(seconds: 10));
-    await tester.pumpAndSettle();
-    expect(client.requests.where((path) => path == '/health').length, 2);
+      await tester.pump(const Duration(seconds: 10));
+      await tester.pumpAndSettle();
+      expect(client.requests.where((path) => path == '/health').length, 2);
 
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 }
