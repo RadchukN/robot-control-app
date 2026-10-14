@@ -555,6 +555,11 @@ class _DesktopSidebar extends StatelessWidget {
       const _DesktopDestination('Dashboard', Icons.dashboard_outlined, 0),
       const _DesktopDestination('AI Workspace', Icons.auto_awesome_outlined, 5),
       const _DesktopDestination('Motion', Icons.trending_up, 1),
+      const _DesktopDestination(
+        'AI Voice Studio',
+        Icons.record_voice_over_outlined,
+        6,
+      ),
       const _DesktopDestination('Vision', Icons.visibility_outlined, 3),
       const _DesktopDestination('Audio', Icons.graphic_eq_outlined, 2),
       const _DesktopDestination('Controller', Icons.sports_esports_outlined),
@@ -711,6 +716,7 @@ class _MediumRail extends StatelessWidget {
       const _DesktopDestination('Dashboard', Icons.dashboard_outlined, 0),
       const _DesktopDestination('AI Agent', Icons.auto_awesome_outlined, 5),
       const _DesktopDestination('Control', Icons.sports_esports_outlined, 1),
+      const _DesktopDestination('Voice', Icons.record_voice_over_outlined, 6),
       const _DesktopDestination('Perception', Icons.visibility_outlined, 3),
       const _DesktopDestination('Settings', Icons.settings_outlined, 4),
     ];
@@ -844,6 +850,11 @@ class _MoreDestinations extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          ListTile(
+            leading: const Icon(Icons.record_voice_over_outlined),
+            title: const Text('AI Voice Studio'),
+            onTap: () => Navigator.pop(context, 6),
+          ),
           ListTile(
             leading: const Icon(Icons.visibility_outlined),
             title: const Text('Vision'),
@@ -1308,6 +1319,14 @@ const _searchDestinations = <_SearchDestination>[
     icon: Icons.motion_photos_auto_outlined,
     keywords:
         'movement saved motions record play pause loop queue hello bye kiss handshake nod thumbs up celebrate bow clap point рух жести запис відтворення',
+  ),
+  _SearchDestination(
+    title: 'AI Voice Studio',
+    section: 'Realtime speaking, text-to-speech, and quick motions',
+    route: AppRoutes.voiceStudio,
+    icon: Icons.record_voice_over_outlined,
+    keywords:
+        'voice ai conversation realtime speak speech tts text to speech transcript phrases microphone speaker голос розмова мовлення',
   ),
   _SearchDestination(
     title: 'Audio',

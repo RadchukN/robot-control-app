@@ -8,6 +8,7 @@ import 'package:robot_control_app/features/dashboard/presentation/dashboard_scre
 import 'package:robot_control_app/features/motion/presentation/motion_screen.dart';
 import 'package:robot_control_app/features/settings/presentation/settings_screen.dart';
 import 'package:robot_control_app/features/vision/presentation/vision_screen.dart';
+import 'package:robot_control_app/features/voice_studio/presentation/voice_studio_screen.dart';
 import 'package:robot_control_app/shared/widgets/app_navigation_shell.dart';
 import 'package:robot_control_app/shared/widgets/error_view.dart';
 
@@ -68,6 +69,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: AppRoutes.aiWorkspace,
                 builder: (context, state) => const AiWorkspaceScreen(),
+              ),
+            ],
+          ),
+          // Appended so existing branch indexes stay unchanged.
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: AppRoutes.voiceStudio,
+                builder: (context, state) => const VoiceStudioScreen(),
               ),
             ],
           ),
