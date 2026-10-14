@@ -4,10 +4,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:robot_control_app/app.dart';
 import 'package:robot_control_app/core/routing/app_router.dart';
 import 'package:robot_control_app/core/routing/app_routes.dart';
+import 'package:robot_control_app/features/dashboard/application/dashboard_controller.dart';
 import 'package:robot_control_app/features/motion/application/motion_state.dart';
+import 'package:robot_control_app/models/dashboard_data.dart';
 import 'package:robot_control_app/services/robot_service.dart';
 
 import 'fixture_api_client.dart';
+
+// These UI/local-editing tests must never connect to the live robot.
+class _OfflineDashboardController extends DashboardController {
+  @override
+  Future<DashboardData> build() async =>
+      DashboardData(updatedAt: DateTime(2026), telemetryConnected: true);
+
+  @override
+  Future<List<String>> getMotionCatalog() async => ['fake_hello.json'];
+}
 
 void main() {
   testWidgets('Motion route fits the approved reference viewports', (
@@ -24,6 +36,9 @@ void main() {
       await tester.binding.setSurfaceSize(size);
       final container = ProviderContainer(
         overrides: [
+          dashboardControllerProvider.overrideWith(
+            _OfflineDashboardController.new,
+          ),
           robotServiceProvider.overrideWithValue(
             RobotService(FixtureApiClient()),
           ),
@@ -53,10 +68,13 @@ void main() {
   });
 
   test(
-    'Motion controller supports local playback, duplicate, and record-save',
+    'Motion controller supports local duplicate and record-save without commands',
     () async {
       final container = ProviderContainer(
         overrides: [
+          dashboardControllerProvider.overrideWith(
+            _OfflineDashboardController.new,
+          ),
           robotServiceProvider.overrideWithValue(
             RobotService(FixtureApiClient()),
           ),
@@ -64,24 +82,9 @@ void main() {
       );
       addTearDown(container.dispose);
       final controller = container.read(motionProvider.notifier);
+      await pumpEventQueue();
       final initial = container.read(motionProvider);
       final selectedId = initial.selectedMotionId!;
-
-      controller.playMotion(selectedId);
-      expect(
-        container.read(motionProvider).playbackStatus,
-        MotionPlaybackStatus.playing,
-      );
-      controller.pause();
-      expect(
-        container.read(motionProvider).playbackStatus,
-        MotionPlaybackStatus.paused,
-      );
-      controller.stop();
-      expect(
-        container.read(motionProvider).playbackStatus,
-        MotionPlaybackStatus.idle,
-      );
 
       controller.duplicate(selectedId);
       final duplicated = container.read(motionProvider);

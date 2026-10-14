@@ -121,10 +121,10 @@ class _MotionHeader extends StatelessWidget {
         _StatusChip(
           icon: state.serviceLoading ? Icons.sync_rounded : Icons.circle,
           label: state.serviceLoading
-              ? 'Connecting motion service'
+              ? 'Loading motion catalog'
               : state.serviceOnline
               ? 'Motion service online'
-              : 'Local motion library',
+              : 'Motion catalog unavailable',
           color: state.serviceOnline ? _green : _purple,
         ),
         _StatusChip(
@@ -142,12 +142,7 @@ class _MotionHeader extends StatelessWidget {
         _GradientButton(
           label: 'Send to robot',
           icon: Icons.send_rounded,
-          onTap: () => _runMotionAction(
-            context,
-            controller.sendSelectedToRobot(),
-            success: 'Motion sent to robot',
-            unavailable: 'Robot motion execution is not connected yet',
-          ),
+          onTap: controller.sendSelectedToRobot,
         ),
       ],
     );
@@ -201,6 +196,11 @@ class _QuickGestures extends StatelessWidget {
                 final gesture = state.quickGestures[index];
                 return _GestureCard(
                   gesture: gesture,
+                  available:
+                      gesture.id == 'hello' ||
+                      state.savedMotions.any(
+                        (motion) => motion.recordedFilename == gesture.id,
+                      ),
                   onPlay: () => controller.playGesture(gesture),
                 );
               },
@@ -213,10 +213,15 @@ class _QuickGestures extends StatelessWidget {
 }
 
 class _GestureCard extends StatelessWidget {
-  const _GestureCard({required this.gesture, required this.onPlay});
+  const _GestureCard({
+    required this.gesture,
+    required this.onPlay,
+    required this.available,
+  });
 
   final QuickGesture gesture;
   final VoidCallback onPlay;
+  final bool available;
 
   @override
   Widget build(BuildContext context) {
@@ -248,7 +253,9 @@ class _GestureCard extends StatelessWidget {
                 ),
                 const Spacer(),
                 Text(
-                  '${gesture.durationSeconds.toStringAsFixed(1)} s',
+                  available
+                      ? _duration(gesture.durationSeconds)
+                      : 'Unavailable',
                   style: _motionText(10, height: 13 / 10, color: _muted),
                 ),
               ],
@@ -310,14 +317,29 @@ class _GestureRobot extends StatelessWidget {
   );
 }
 
-class _SavedMotions extends StatelessWidget {
+class _SavedMotions extends StatefulWidget {
   const _SavedMotions({required this.state, required this.controller});
 
   final MotionState state;
   final MotionController controller;
 
   @override
+  State<_SavedMotions> createState() => _SavedMotionsState();
+}
+
+class _SavedMotionsState extends State<_SavedMotions> {
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final state = widget.state;
+    final controller = widget.controller;
     return _MotionPanel(
       padding: const EdgeInsets.all(14),
       child: Column(
@@ -373,21 +395,116 @@ class _SavedMotions extends StatelessWidget {
             },
           ),
           const SizedBox(height: 10),
+          if (state.playbackStatus != MotionPlaybackStatus.idle) ...[
+            _PlaybackProgress(state: state),
+            const SizedBox(height: 10),
+          ],
           if (state.visibleMotions.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 28),
               child: Text(
-                'No motions match this filter.',
+                state.serviceLoading
+                    ? 'Loading motion catalog…'
+                    : state.error ??
+                          (state.savedMotions.isEmpty
+                              ? 'No recorded motions available.'
+                              : 'No motions match this filter.'),
                 textAlign: TextAlign.center,
                 style: _motionText(12, height: 16 / 12, color: _muted),
               ),
             )
           else
-            LayoutBuilder(
-              builder: (context, constraints) => constraints.maxWidth >= 690
-                  ? _MotionTable(state: state, controller: controller)
-                  : _MotionCards(state: state, controller: controller),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: (MediaQuery.sizeOf(context).height * 0.45).clamp(
+                  220.0,
+                  420.0,
+                ),
+              ),
+              child: Scrollbar(
+                controller: _scrollController,
+                thumbVisibility: true,
+                child: SingleChildScrollView(
+                  controller: _scrollController,
+                  primary: false,
+                  padding: const EdgeInsets.only(right: 10),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) =>
+                        constraints.maxWidth >= 690
+                        ? _MotionTable(state: state, controller: controller)
+                        : _MotionCards(state: state, controller: controller),
+                  ),
+                ),
+              ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlaybackProgress extends StatelessWidget {
+  const _PlaybackProgress({required this.state});
+
+  final MotionState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = state.playbackStatus;
+    final active =
+        status == MotionPlaybackStatus.sending ||
+        status == MotionPlaybackStatus.playing ||
+        status == MotionPlaybackStatus.stopping;
+    final label = switch (status) {
+      MotionPlaybackStatus.idle => 'Ready',
+      MotionPlaybackStatus.sending => 'Sending to robot…',
+      MotionPlaybackStatus.playing => 'Playing on robot…',
+      MotionPlaybackStatus.paused => 'Paused',
+      MotionPlaybackStatus.stopping => 'Stopping…',
+      MotionPlaybackStatus.finished => 'Completed',
+      MotionPlaybackStatus.simulated => simulationOnlyLabel,
+      MotionPlaybackStatus.stopped => 'Stopped',
+      MotionPlaybackStatus.error => 'Error',
+      MotionPlaybackStatus.busy => 'Robot busy',
+      MotionPlaybackStatus.unavailable => 'Unavailable',
+    };
+    final color = switch (status) {
+      MotionPlaybackStatus.finished => _green,
+      MotionPlaybackStatus.error => _red,
+      MotionPlaybackStatus.busy ||
+      MotionPlaybackStatus.unavailable ||
+      MotionPlaybackStatus.simulated => _amber,
+      _ => _purple,
+    };
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            '${state.currentMotionName ?? 'Motion'} · $label',
+            style: _motionText(
+              12,
+              height: 16 / 12,
+              weight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 9),
+          LinearProgressIndicator(
+            value: active
+                ? null
+                : (status == MotionPlaybackStatus.finished ? 1 : 0),
+            minHeight: 6,
+            borderRadius: BorderRadius.circular(3),
+            color: color,
+            backgroundColor: color.withValues(alpha: 0.12),
+            semanticsLabel: label,
+          ),
         ],
       ),
     );
@@ -959,9 +1076,7 @@ class _PlaybackControls extends StatelessWidget {
                 _PlaybackButton(
                   label: 'Stop',
                   icon: Icons.stop_rounded,
-                  onTap: state.playbackStatus == MotionPlaybackStatus.idle
-                      ? null
-                      : controller.stop,
+                  onTap: controller.stop,
                 ),
                 SizedBox(
                   width: 92,
@@ -1010,13 +1125,7 @@ class _PlaybackControls extends StatelessWidget {
                       icon: Icons.send_rounded,
                       onTap: selected == null
                           ? null
-                          : () => _runMotionAction(
-                              context,
-                              controller.sendSelectedToRobot(),
-                              success: 'Motion sent to robot',
-                              unavailable:
-                                  'Robot motion execution is not connected yet',
-                            ),
+                          : controller.sendSelectedToRobot,
                     ),
                   ),
                 ),
@@ -1119,7 +1228,9 @@ class _MotionStatusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final current = state.currentMotionName ?? 'None';
+    final current = state.currentMotionName == null
+        ? state.playbackStatus.name
+        : '${state.currentMotionName} · ${state.playbackStatus.name}';
     return _MotionPanel(
       padding: const EdgeInsets.all(14),
       child: Column(
@@ -1133,8 +1244,8 @@ class _MotionStatusCard extends StatelessWidget {
           const SizedBox(height: 9),
           _SidebarRow(
             label: 'Service',
-            value: state.serviceOnline ? 'Online' : 'Local',
-            color: state.serviceOnline ? _green : _purple,
+            value: state.robotConnected ? 'Online' : 'Offline',
+            color: state.robotConnected ? _green : _purple,
           ),
           _SidebarRow(label: 'Current motion', value: current),
           _SidebarRow(
@@ -1921,7 +2032,8 @@ TextStyle _motionText(
 }) =>
     TextStyle(fontSize: size, height: height, fontWeight: weight, color: color);
 
-String _duration(double seconds) => '${seconds.toStringAsFixed(1)} s';
+String _duration(double seconds) =>
+    seconds > 0 ? '${seconds.toStringAsFixed(1)} s' : '--';
 
 String _recordingTime(Duration duration) {
   final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');

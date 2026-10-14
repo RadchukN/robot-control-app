@@ -2,10 +2,23 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:robot_control_app/models/motion_info.dart';
-import 'package:robot_control_app/services/robot_service.dart';
+import 'package:robot_control_app/features/dashboard/application/dashboard_controller.dart';
+import 'package:robot_control_app/services/web_socket_service.dart';
 
-enum MotionPlaybackStatus { idle, playing, paused }
+enum MotionPlaybackStatus {
+  idle,
+  sending,
+  playing,
+  paused,
+  stopping,
+  finished,
+  // Backend dry run: the command was simulated and the robot did not move.
+  simulated,
+  stopped,
+  error,
+  busy,
+  unavailable,
+}
 
 @immutable
 class SavedMotion {
@@ -18,6 +31,7 @@ class SavedMotion {
     required this.favorite,
     required this.source,
     this.enabled = true,
+    this.backendFilename,
   });
 
   final String id;
@@ -28,6 +42,22 @@ class SavedMotion {
   final bool favorite;
   final String source;
   final bool enabled;
+  // Immutable catalog identity, separate from the editable display name.
+  final String? backendFilename;
+
+  String? get recordedFilename {
+    final filename =
+        backendFilename ??
+        (id.startsWith('motion-file:assets:motions:') &&
+                source.startsWith('assets/motions/')
+            ? source.substring('assets/motions/'.length)
+            : null);
+    return enabled &&
+            filename != null &&
+            MotionCommandSession.isRecordingFilename(filename)
+        ? filename
+        : null;
+  }
 
   SavedMotion copyWith({String? name, bool? favorite}) => SavedMotion(
     id: id,
@@ -38,6 +68,7 @@ class SavedMotion {
     favorite: favorite ?? this.favorite,
     source: source,
     enabled: enabled,
+    backendFilename: backendFilename,
   );
 }
 
@@ -67,6 +98,8 @@ class MotionActivity {
 
 const _unset = Object();
 
+const simulationOnlyLabel = 'Simulation only — robot did not move';
+
 @immutable
 class MotionState {
   const MotionState({
@@ -90,18 +123,20 @@ class MotionState {
     required this.recordedDuration,
     required this.hasUnsavedChanges,
     required this.error,
+    this.commandMessage,
+    this.robotConnected = false,
   });
 
   const MotionState.initial()
     : serviceLoading = true,
       serviceOnline = false,
-      usingLocalFallback = true,
-      savedMotions = _fallbackMotions,
+      usingLocalFallback = false,
+      savedMotions = const [],
       quickGestures = _quickGestures,
-      recentActivity = _initialActivity,
+      recentActivity = const [],
       searchQuery = '',
       typeFilter = 'All types',
-      selectedMotionId = 'motion-file:assets:motions:fake_hello',
+      selectedMotionId = null,
       currentMotionName = null,
       playbackStatus = MotionPlaybackStatus.idle,
       playbackSpeed = 1,
@@ -112,7 +147,12 @@ class MotionState {
       recording = false,
       recordedDuration = Duration.zero,
       hasUnsavedChanges = false,
-      error = null;
+      error = null,
+      commandMessage = null,
+      robotConnected = false;
+
+  final String? commandMessage;
+  final bool robotConnected;
 
   final bool serviceLoading;
   final bool serviceOnline;
@@ -180,6 +220,8 @@ class MotionState {
     Duration? recordedDuration,
     bool? hasUnsavedChanges,
     Object? error = _unset,
+    Object? commandMessage = _unset,
+    bool? robotConnected,
   }) => MotionState(
     serviceLoading: serviceLoading ?? this.serviceLoading,
     serviceOnline: serviceOnline ?? this.serviceOnline,
@@ -205,6 +247,10 @@ class MotionState {
     recordedDuration: recordedDuration ?? this.recordedDuration,
     hasUnsavedChanges: hasUnsavedChanges ?? this.hasUnsavedChanges,
     error: identical(error, _unset) ? this.error : error as String?,
+    commandMessage: identical(commandMessage, _unset)
+        ? this.commandMessage
+        : commandMessage as String?,
+    robotConnected: robotConnected ?? this.robotConnected,
   );
 }
 
@@ -221,49 +267,118 @@ final motionCommandGatewayProvider = Provider<MotionCommandGateway?>(
 class MotionController extends Notifier<MotionState> {
   Timer? _recordingTimer;
   DateTime? _recordingStarted;
+  int _commandGeneration = 0;
+  bool _commandPending = false;
+  String? _pendingAction;
+  bool _catalogRequested = false;
+  bool _catalogLoading = false;
+  int _catalogGeneration = 0;
 
   @override
   MotionState build() {
+    ref.listen(dashboardControllerProvider, (_, next) {
+      final connected =
+          !next.hasError &&
+          !next.isLoading &&
+          next.value?.telemetryConnected == true;
+      if (connected != state.robotConnected) {
+        if (!connected) {
+          _catalogGeneration++;
+          _catalogRequested = false;
+          _catalogLoading = false;
+        }
+        state = state.copyWith(
+          robotConnected: connected,
+          serviceLoading: connected,
+          serviceOnline: false,
+          savedMotions: const [],
+          selectedMotionId: null,
+          typeFilter: 'All types',
+          error: connected
+              ? null
+              : 'WebSocket disconnected. Catalog unavailable.',
+          commandMessage: connected
+              ? 'Robot WebSocket connected. No motion was sent.'
+              : 'Robot WebSocket disconnected. Motion outcome may be unknown.',
+        );
+        if (connected) unawaited(_loadMotions());
+      }
+    });
     ref.onDispose(() => _recordingTimer?.cancel());
     Future<void>.microtask(_loadMotions);
-    return const MotionState.initial();
+    final dashboard = ref.read(dashboardControllerProvider);
+    return const MotionState.initial().copyWith(
+      robotConnected:
+          !dashboard.hasError &&
+          !dashboard.isLoading &&
+          dashboard.value?.telemetryConnected == true,
+    );
   }
 
   Future<void> _loadMotions() async {
+    if (!ref.mounted || _catalogLoading || _catalogRequested) return;
+    if (!state.robotConnected) {
+      state = state.copyWith(
+        serviceLoading: false,
+        serviceOnline: false,
+        error: 'WebSocket disconnected. Waiting for connection.',
+      );
+      return;
+    }
+    _catalogRequested = true;
+    _catalogLoading = true;
+    final generation = ++_catalogGeneration;
+    state = state.copyWith(serviceLoading: true, error: null);
     try {
-      final items = await ref.read(robotServiceProvider).motions();
-      if (!ref.mounted) return;
-      final motions = items
-          .where(
-            (item) =>
-                item.category.toLowerCase() != 'modules' &&
-                !item.name.toLowerCase().startsWith('medza.motion.'),
+      final filenames = await ref
+          .read(dashboardControllerProvider.notifier)
+          .getMotionCatalog();
+      if (!ref.mounted || generation != _catalogGeneration) return;
+      final motions = filenames
+          .map(
+            (filename) => SavedMotion(
+              id: 'recorded:$filename',
+              name: filename,
+              type: _motionType(filename, 'Recorded'),
+              durationSeconds: 0,
+              lastUsed: '--',
+              favorite: false,
+              source: 'robot',
+              backendFilename: filename,
+            ),
           )
-          .map(_fromInfo)
           .toList(growable: false);
       state = state.copyWith(
         serviceLoading: false,
         serviceOnline: true,
-        usingLocalFallback: motions.isEmpty,
-        savedMotions: motions.isEmpty ? state.savedMotions : motions,
-        selectedMotionId: motions.isEmpty
+        usingLocalFallback: false,
+        savedMotions: motions,
+        selectedMotionId:
+            motions.any((motion) => motion.id == state.selectedMotionId)
             ? state.selectedMotionId
-            : motions.first.id,
+            : motions.firstOrNull?.id,
+        typeFilter: 'All types',
         error: null,
       );
-    } on Object {
-      if (!ref.mounted) return;
+    } on Object catch (error) {
+      if (!ref.mounted || generation != _catalogGeneration) return;
       state = state.copyWith(
         serviceLoading: false,
         serviceOnline: false,
-        usingLocalFallback: true,
-        error: 'Motion service unavailable',
+        usingLocalFallback: false,
+        savedMotions: const [],
+        selectedMotionId: null,
+        typeFilter: 'All types',
+        error: 'Motion catalog unavailable: $error',
       );
+    } finally {
+      if (generation == _catalogGeneration) _catalogLoading = false;
     }
   }
 
   Future<void> refresh() async {
-    state = state.copyWith(serviceLoading: true, error: null);
+    if (_catalogLoading) return;
+    _catalogRequested = false;
     await _loadMotions();
   }
 
@@ -274,43 +389,204 @@ class MotionController extends Notifier<MotionState> {
 
   void selectMotion(String id) => state = state.copyWith(selectedMotionId: id);
 
-  void playMotion(String id) {
+  Future<bool> playMotion(String id) async {
     final motion = state.savedMotions
         .where((item) => item.id == id)
         .firstOrNull;
-    if (motion == null || !motion.enabled) return;
-    state = state.copyWith(
-      selectedMotionId: id,
-      currentMotionName: motion.name,
-      playbackStatus: MotionPlaybackStatus.playing,
-      recentActivity: _activity(motion.name, motion.durationSeconds),
+    if (motion == null || !motion.enabled) {
+      _unavailable('This motion');
+      return false;
+    }
+    state = state.copyWith(selectedMotionId: id);
+    final filename = motion.recordedFilename;
+    if (filename == null) {
+      _unavailable(motion.name);
+      return false;
+    }
+    return sendRecordedMotion(filename);
+  }
+
+  Future<bool> sendRecordedMotion(String filename) async {
+    final motion = state.savedMotions
+        .where((item) => item.recordedFilename == filename)
+        .firstOrNull;
+    if (motion == null) {
+      _unavailable('Recorded motion');
+      return false;
+    }
+    return _send(
+      'play_recorded_motion',
+      filename,
+      motion.durationSeconds,
+      filename: filename,
     );
   }
 
-  void playGesture(QuickGesture gesture) {
-    state = state.copyWith(
-      currentMotionName: gesture.name,
-      playbackStatus: MotionPlaybackStatus.playing,
-      recentActivity: _activity(gesture.name, gesture.durationSeconds),
-    );
+  Future<bool> playGesture(QuickGesture gesture) async {
+    if (gesture.id == 'hello') {
+      return _send('wave_hand', gesture.name, gesture.durationSeconds);
+    }
+    return sendRecordedMotion(gesture.id);
   }
 
   void pause() {
-    if (state.playbackStatus != MotionPlaybackStatus.playing) return;
-    state = state.copyWith(playbackStatus: MotionPlaybackStatus.paused);
+    _unavailable('Pause');
   }
 
-  void stop() => state = state.copyWith(
-    playbackStatus: MotionPlaybackStatus.idle,
-    currentMotionName: null,
-  );
+  Future<bool> stop() => _send('stop_motion', 'Stop', 0);
 
-  void setPlaybackSpeed(double value) =>
-      state = state.copyWith(playbackSpeed: value);
+  void _unavailable(String label) {
+    state = state.copyWith(commandMessage: null);
+    state = state.copyWith(
+      playbackStatus: _commandPending
+          ? state.playbackStatus
+          : MotionPlaybackStatus.unavailable,
+      commandMessage:
+          '$label is not connected to the robot yet. No command sent.',
+    );
+  }
 
-  void toggleLoop() => state = state.copyWith(loop: !state.loop);
+  Future<bool> _send(
+    String action,
+    String name,
+    double duration, {
+    String? filename,
+  }) async {
+    debugPrint(
+      '[MOTION DEBUG] controller send attempt action=$action motion=$filename '
+      'pending=$_commandPending pendingAction=$_pendingAction generation=$_commandGeneration',
+    );
+    if (_commandPending &&
+        (action != 'stop_motion' || _pendingAction == 'stop_motion')) {
+      debugPrint('[MOTION DEBUG] controller send blocked: local pending guard');
+      state = state.copyWith(
+        commandMessage: 'A command is pending. Stop remains available.',
+      );
+      return false;
+    }
+    final generation = ++_commandGeneration;
+    _commandPending = true;
+    _pendingAction = action;
+    state = state.copyWith(
+      commandMessage: 'Sending $name to robot…',
+      error: null,
+      playbackStatus: action == 'stop_motion'
+          ? MotionPlaybackStatus.stopping
+          : MotionPlaybackStatus.sending,
+      currentMotionName: action == 'stop_motion'
+          ? state.currentMotionName
+          : name,
+    );
+    try {
+      void processResult(Map<String, dynamic> result) {
+        if (!ref.mounted || generation != _commandGeneration) {
+          debugPrint(
+            '[MOTION DEBUG] controller response ignored: '
+            'mounted=${ref.mounted} responseGeneration=$generation '
+            'currentGeneration=$_commandGeneration',
+          );
+          return;
+        }
+        final status = result['status'];
+        if (const [
+          'completed',
+          'failed',
+          'stopped',
+          'unsupported_motion',
+          'busy',
+          'dry_run',
+        ].contains(status)) {
+          // Release the local command gate before notifying UI listeners.
+          _commandPending = false;
+          _pendingAction = null;
+        }
+        final playbackStatus = switch (status) {
+          'accepted' =>
+            action == 'stop_motion'
+                ? MotionPlaybackStatus.stopping
+                : MotionPlaybackStatus.playing,
+          'completed' =>
+            action == 'stop_motion'
+                ? MotionPlaybackStatus.stopped
+                : MotionPlaybackStatus.finished,
+          'stopped' => MotionPlaybackStatus.stopped,
+          'dry_run' => MotionPlaybackStatus.simulated,
+          'busy' => MotionPlaybackStatus.busy,
+          'unsupported_motion' => MotionPlaybackStatus.unavailable,
+          _ => MotionPlaybackStatus.error,
+        };
+        final description = switch (playbackStatus) {
+          MotionPlaybackStatus.playing => 'Playing on robot',
+          MotionPlaybackStatus.stopping => 'Stop accepted; waiting for robot',
+          MotionPlaybackStatus.finished => 'Finished',
+          MotionPlaybackStatus.stopped => 'Stopped',
+          MotionPlaybackStatus.simulated => simulationOnlyLabel,
+          MotionPlaybackStatus.busy => 'Robot busy; command rejected',
+          MotionPlaybackStatus.unavailable => 'Recording unavailable on robot',
+          _ => 'Robot command failed',
+        };
+        final detail = result['error'] ?? result['message'];
+        final message =
+            '$name: $description${detail == null ? '' : ' — $detail'}';
+        state = state.copyWith(
+          playbackStatus: playbackStatus,
+          error: const ['failed', 'busy', 'unsupported_motion'].contains(status)
+              ? message
+              : null,
+          commandMessage: message,
+          recentActivity: _activity('$name: $description', duration),
+        );
+      }
 
-  void toggleQueueNext() => state = state.copyWith(queueNext: !state.queueNext);
+      void onResult(Map<String, dynamic> result) {
+        debugPrint(
+          '[MOTION DEBUG] controller before response '
+          'action=${result['action']} motion=${result['motion']} status=${result['status']} '
+          'expectedAction=$action expectedMotion=$filename '
+          'pending=$_commandPending pendingAction=$_pendingAction generation=$_commandGeneration',
+        );
+        try {
+          processResult(result);
+        } finally {
+          debugPrint(
+            '[MOTION DEBUG] controller after response '
+            'pending=$_commandPending pendingAction=$_pendingAction generation=$_commandGeneration',
+          );
+        }
+      }
+
+      final dashboard = ref.read(dashboardControllerProvider.notifier);
+      final result = await (filename == null
+          ? dashboard.sendMotion(action, onResult: onResult)
+          : dashboard.sendRecordedMotion(filename, onResult: onResult));
+      if (!ref.mounted || generation != _commandGeneration) return false;
+      return const ['completed', 'stopped'].contains(result['status']);
+    } on Object catch (error) {
+      if (!ref.mounted || generation != _commandGeneration) return false;
+      state = state.copyWith(
+        playbackStatus: MotionPlaybackStatus.error,
+        error: '$error',
+        commandMessage: '$name: $error',
+      );
+      return false;
+    } finally {
+      if (generation == _commandGeneration) {
+        _commandPending = false;
+        _pendingAction = null;
+      }
+      debugPrint(
+        '[MOTION DEBUG] controller send finally action=$action motion=$filename '
+        'pending=$_commandPending pendingAction=$_pendingAction '
+        'sendGeneration=$generation currentGeneration=$_commandGeneration',
+      );
+    }
+  }
+
+  void setPlaybackSpeed(double value) => _unavailable('Playback speed');
+
+  void toggleLoop() => _unavailable('Loop');
+
+  void toggleQueueNext() => _unavailable('Queue next');
 
   void toggleFavorite(String id) {
     state = state.copyWith(
@@ -436,11 +712,12 @@ class MotionController extends Notifier<MotionState> {
   }
 
   Future<bool> sendSelectedToRobot() async {
-    final gateway = ref.read(motionCommandGatewayProvider);
     final motion = state.selectedMotion;
-    if (gateway == null || motion == null) return false;
-    await gateway.sendMotion(motion);
-    return true;
+    if (motion == null) {
+      _unavailable('Selected motion');
+      return false;
+    }
+    return playMotion(motion.id);
   }
 
   Future<bool> importMotions() async {
@@ -463,22 +740,6 @@ class MotionController extends Notifier<MotionState> {
     MotionActivity(title, duration, 'Just now'),
     ...state.recentActivity.take(4),
   ];
-
-  SavedMotion _fromInfo(MotionInfo info) {
-    final fallback = _fallbackMotions
-        .where((item) => item.name == info.name)
-        .firstOrNull;
-    return SavedMotion(
-      id: info.id,
-      name: info.name,
-      type: _motionType(info.name, info.category),
-      durationSeconds: info.durationSeconds ?? fallback?.durationSeconds ?? 0,
-      lastUsed: fallback?.lastUsed ?? 'Not yet',
-      favorite: fallback?.favorite ?? false,
-      source: info.source,
-      enabled: info.enabled,
-    );
-  }
 }
 
 final motionProvider = NotifierProvider<MotionController, MotionState>(
@@ -499,106 +760,13 @@ String _motionType(String name, String fallback) {
 
 const _quickGestures = [
   QuickGesture('hello', 'Hello', 2.1, 0),
-  QuickGesture('bye', 'Bye', 2.0, 1),
-  QuickGesture('kiss', 'Kiss', 1.8, 2),
-  QuickGesture('handshake', 'Handshake', 2.6, 3),
-  QuickGesture('nod', 'Nod', 1.2, 4),
-  QuickGesture('thumbs-up', 'Thumbs up', 1.6, 5),
-  QuickGesture('celebrate', 'Celebrate', 4.0, 6),
-  QuickGesture('bow', 'Bow', 2.4, 7),
-  QuickGesture('clap', 'Clap', 2.2, 8),
-  QuickGesture('point-left', 'Point left', 1.8, 9),
-  QuickGesture('point-right', 'Point right', 1.8, 10),
-];
-
-const _fallbackMotions = [
-  SavedMotion(
-    id: 'motion-file:assets:motions:fake_hello',
-    name: 'fake_hello.json',
-    type: 'Greeting',
-    durationSeconds: 16.25,
-    lastUsed: '2 hours ago',
-    favorite: true,
-    source: 'assets/motions/fake_hello.json',
-  ),
-  SavedMotion(
-    id: 'motion-file:assets:motions:macarena',
-    name: 'macarena.json',
-    type: 'Dance',
-    durationSeconds: 36.85,
-    lastUsed: '1 day ago',
-    favorite: false,
-    source: 'assets/motions/macarena.json',
-  ),
-  SavedMotion(
-    id: 'motion-file:assets:motions:max_dance',
-    name: 'max_dance.json',
-    type: 'Dance',
-    durationSeconds: 36.87,
-    lastUsed: '3 hours ago',
-    favorite: true,
-    source: 'assets/motions/max_dance.json',
-  ),
-  SavedMotion(
-    id: 'motion-file:assets:motions:trump_dance',
-    name: 'trump_dance.json',
-    type: 'Dance',
-    durationSeconds: 40.48,
-    lastUsed: '2 days ago',
-    favorite: false,
-    source: 'assets/motions/trump_dance.json',
-  ),
-  SavedMotion(
-    id: 'motion-file:assets:motions:omg',
-    name: 'omg.json',
-    type: 'Reaction',
-    durationSeconds: 10,
-    lastUsed: '5 hours ago',
-    favorite: false,
-    source: 'assets/motions/omg.json',
-  ),
-  SavedMotion(
-    id: 'motion-file:assets:motions:ziga',
-    name: 'ziga.json',
-    type: 'Gesture',
-    durationSeconds: 11.08,
-    lastUsed: '1 day ago',
-    favorite: true,
-    source: 'assets/motions/ziga.json',
-  ),
-  SavedMotion(
-    id: 'motion-file:assets:motions:kiril',
-    name: 'kiril.json',
-    type: 'Custom',
-    durationSeconds: 29.75,
-    lastUsed: '3 days ago',
-    favorite: false,
-    source: 'assets/motions/kiril.json',
-  ),
-  SavedMotion(
-    id: 'motion-file:assets:motions:67',
-    name: '67.json',
-    type: 'Custom',
-    durationSeconds: 25.13,
-    lastUsed: '1 week ago',
-    favorite: false,
-    source: 'assets/motions/67.json',
-  ),
-  SavedMotion(
-    id: 'motion-file:assets:motions:fuck',
-    name: 'fuck.json',
-    type: 'Custom',
-    durationSeconds: 28.23,
-    lastUsed: 'Not yet',
-    favorite: false,
-    source: 'assets/motions/fuck.json',
-  ),
-];
-
-const _initialActivity = [
-  MotionActivity('fake_hello.json', 16.25, '2 hours ago'),
-  MotionActivity('max_dance.json', 36.87, '3 hours ago'),
-  MotionActivity('omg.json', 10, '5 hours ago'),
-  MotionActivity('ziga.json', 11.08, '1 day ago'),
-  MotionActivity('macarena.json', 36.85, '1 day ago'),
+  QuickGesture('hello_hand.json', 'Hand Hello', 0, 1),
+  QuickGesture('fake_hello.json', 'Wave', 0, 2),
+  QuickGesture('gudbay.json', 'Goodbye', 0, 3),
+  QuickGesture('gudbay_solider.json', 'Soldier Goodbye', 0, 4),
+  QuickGesture('love.json', 'Love', 0, 5),
+  QuickGesture('what.json', 'What?', 0, 6),
+  QuickGesture('67.json', '67', 0, 7),
+  QuickGesture('kuku.json', 'Peekaboo', 0, 8),
+  QuickGesture('heart.json', 'Heart', 0, 9),
 ];

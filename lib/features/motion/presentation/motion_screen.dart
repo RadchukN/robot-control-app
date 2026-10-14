@@ -25,6 +25,12 @@ class MotionScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.listen(motionProvider.select((state) => state.commandMessage), (
+      _,
+      next,
+    ) {
+      if (next != null) _showMotionMessage(context, next);
+    });
     final state = ref.watch(motionProvider);
     final controller = ref.read(motionProvider.notifier);
     return DecoratedBox(
