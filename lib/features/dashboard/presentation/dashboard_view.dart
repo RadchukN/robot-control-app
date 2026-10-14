@@ -58,7 +58,7 @@ class DashboardView extends StatelessWidget {
             SizedBox(height: gap),
             _RobotOverview(data: data, layout: layout),
             SizedBox(height: gap),
-            _PrimaryMetrics(layout: layout),
+            _PrimaryMetrics(data: data, layout: layout),
             SizedBox(height: gap),
             _OperationalGrid(layout: layout),
             SizedBox(height: gap),
@@ -166,7 +166,7 @@ class _HeaderReadyState extends StatelessWidget {
           _Dot(color: Color(0xFF1AAF68)),
           SizedBox(width: 8),
           Text(
-            'Ready',
+            'Telemetry',
             style: TextStyle(
               color: Color(0xFF167A46),
               fontSize: 14,
@@ -187,8 +187,17 @@ class _RobotOverview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final connected = data.health.isHealthy && data.runtime.running;
-    final nominal = data.services.every((service) => service.health.healthy);
+    final connected = data.telemetryConnected;
+    final batterySoc = data.telemetry?.batterySoc;
+    final batteryValue = batterySoc == null ? '--' : '$batterySoc%';
+    final telemetry = data.telemetry;
+    final signalPercent = telemetry?.networkSignalPercent;
+    final signalLabel = switch (telemetry?.networkType) {
+      'ethernet' => 'Ethernet',
+      'wifi' => signalPercent == null ? 'Wi-Fi' : 'Wi-Fi $signalPercent%',
+      _ => '--',
+    };
+    const nominal = false;
     final height = switch (layout) {
       _DashboardLayout.compact => 292.0,
       _DashboardLayout.medium => 180.0,
@@ -239,7 +248,12 @@ class _RobotOverview extends StatelessWidget {
             ),
           ),
           if (layout == _DashboardLayout.expanded)
-            _ExpandedOverviewContent(connected: connected, nominal: nominal)
+            _ExpandedOverviewContent(
+              connected: connected,
+              nominal: nominal,
+              batteryValue: batteryValue,
+              signalLabel: signalLabel,
+            )
           else
             Padding(
               padding: const EdgeInsets.all(16),
@@ -261,10 +275,14 @@ class _RobotOverview extends StatelessWidget {
                         ? _CompactOverviewBody(
                             connected: connected,
                             nominal: nominal,
+                            batteryValue: batteryValue,
+                            signalLabel: signalLabel,
                           )
                         : _MediumOverviewBody(
                             connected: connected,
                             nominal: nominal,
+                            batteryValue: batteryValue,
+                            signalLabel: signalLabel,
                           ),
                   ),
                 ],
@@ -280,10 +298,14 @@ class _ExpandedOverviewContent extends StatelessWidget {
   const _ExpandedOverviewContent({
     required this.connected,
     required this.nominal,
+    required this.batteryValue,
+    required this.signalLabel,
   });
 
   final bool connected;
   final bool nominal;
+  final String batteryValue;
+  final String signalLabel;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
@@ -332,28 +354,27 @@ class _ExpandedOverviewContent extends StatelessWidget {
                 flex: 162,
                 child: _StatusChip(
                   icon: Icons.shield_outlined,
-                  label: nominal ? 'Safety nominal' : 'Safety check',
-                  positive: nominal,
+                  label: 'Safety unavailable',
+                  positive: null,
                 ),
               ),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 flex: 122,
                 child: _StatusChip(
                   icon: Icons.work,
                   label: 'Battery',
-                  value: '78%',
+                  value: batteryValue,
                   positive: true,
                 ),
               ),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 flex: 117,
                 child: _StatusChip(
                   icon: Icons.signal_cellular_alt,
-                  label: 'Signal',
-                  value: '92%',
-                  positive: true,
+                  label: signalLabel,
+                  positive: null,
                 ),
               ),
               const SizedBox(width: 12),
@@ -367,10 +388,17 @@ class _ExpandedOverviewContent extends StatelessWidget {
 }
 
 class _CompactOverviewBody extends StatelessWidget {
-  const _CompactOverviewBody({required this.connected, required this.nominal});
+  const _CompactOverviewBody({
+    required this.connected,
+    required this.nominal,
+    required this.batteryValue,
+    required this.signalLabel,
+  });
 
   final bool connected;
   final bool nominal;
+  final String batteryValue;
+  final String signalLabel;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -393,15 +421,15 @@ class _CompactOverviewBody extends StatelessWidget {
             Expanded(
               child: _StatusChip(
                 icon: Icons.shield_outlined,
-                label: nominal ? 'Safety nominal' : 'Safety check',
-                positive: nominal,
+                label: 'Safety unavailable',
+                positive: null,
               ),
             ),
           ],
         ),
       ),
       const SizedBox(height: 8),
-      const SizedBox(
+      SizedBox(
         height: 48,
         child: Row(
           children: [
@@ -409,7 +437,7 @@ class _CompactOverviewBody extends StatelessWidget {
               child: _StatusChip(
                 icon: Icons.work,
                 label: 'Battery',
-                value: '78%',
+                value: batteryValue,
                 positive: true,
               ),
             ),
@@ -417,9 +445,8 @@ class _CompactOverviewBody extends StatelessWidget {
             Expanded(
               child: _StatusChip(
                 icon: Icons.signal_cellular_alt,
-                label: 'Signal',
-                value: '92%',
-                positive: true,
+                label: signalLabel,
+                positive: null,
               ),
             ),
           ],
@@ -432,10 +459,17 @@ class _CompactOverviewBody extends StatelessWidget {
 }
 
 class _MediumOverviewBody extends StatelessWidget {
-  const _MediumOverviewBody({required this.connected, required this.nominal});
+  const _MediumOverviewBody({
+    required this.connected,
+    required this.nominal,
+    required this.batteryValue,
+    required this.signalLabel,
+  });
 
   final bool connected;
   final bool nominal;
+  final String batteryValue;
+  final String signalLabel;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -459,15 +493,15 @@ class _MediumOverviewBody extends StatelessWidget {
               flex: 162,
               child: _StatusChip(
                 icon: Icons.shield_outlined,
-                label: nominal ? 'Safety nominal' : 'Safety check',
-                positive: nominal,
+                label: 'Safety unavailable',
+                positive: null,
               ),
             ),
           ],
         ),
       ),
       const SizedBox(height: 12),
-      const Expanded(
+      Expanded(
         child: Row(
           children: [
             Expanded(
@@ -475,7 +509,7 @@ class _MediumOverviewBody extends StatelessWidget {
               child: _StatusChip(
                 icon: Icons.work,
                 label: 'Battery',
-                value: '78%',
+                value: batteryValue,
                 positive: true,
               ),
             ),
@@ -484,9 +518,8 @@ class _MediumOverviewBody extends StatelessWidget {
               flex: 117,
               child: _StatusChip(
                 icon: Icons.signal_cellular_alt,
-                label: 'Signal',
-                value: '92%',
-                positive: true,
+                label: signalLabel,
+                positive: null,
               ),
             ),
             SizedBox(width: 12),
@@ -517,7 +550,7 @@ class _RobotIdentity extends StatelessWidget {
         ),
       ),
       Text(
-        'Unitree G1 · Autonomous mode',
+        'Unitree G1 · Telemetry',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
@@ -583,12 +616,16 @@ class _StatusChip extends StatelessWidget {
 
   final IconData icon;
   final String label;
-  final bool positive;
+  final bool? positive;
   final String? value;
 
   @override
   Widget build(BuildContext context) {
-    final foreground = positive ? const Color(0xFF146C2E) : AppColors.error;
+    final foreground = positive == null
+        ? const Color(0xFF49454F)
+        : positive!
+        ? const Color(0xFF146C2E)
+        : AppColors.error;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -601,10 +638,14 @@ class _StatusChip extends StatelessWidget {
           height: 48,
           padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(
-            color: positive ? const Color(0xD9DDF8E8) : const Color(0xFFFFDAD6),
+            color: positive == null
+                ? const Color(0xFFE5E1E6)
+                : positive!
+                ? const Color(0xD9DDF8E8)
+                : const Color(0xFFFFDAD6),
             borderRadius: BorderRadius.circular(13),
             border: Border.all(
-              color: positive
+              color: positive == true
                   ? const Color(0x382DB46E)
                   : const Color(0x52BA1A1A),
             ),
@@ -619,7 +660,7 @@ class _StatusChip extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _Dot(color: positive ? const Color(0xFF1AAF68) : AppColors.error),
+              _Dot(color: foreground),
               const SizedBox(width: 7),
               Icon(icon, size: 18, color: foreground),
               const SizedBox(width: 7),
@@ -703,115 +744,96 @@ class _Dot extends StatelessWidget {
 }
 
 class _PrimaryMetrics extends StatelessWidget {
-  const _PrimaryMetrics({required this.layout});
+  const _PrimaryMetrics({required this.data, required this.layout});
 
-  static const metrics = [
-    _MetricData(
-      'Battery',
-      '78%',
-      '≈ 2 h 06 min remaining',
-      Icons.battery_5_bar,
-      Color(0xFF48CFA1),
-      [.2, .35, .28, .42, .3, .48, .24, .39, .31, .55, .46, .29],
-    ),
-    _MetricData('CPU', '34%', 'Nominal load', Icons.memory, Color(0xFF9B73FF), [
-      .58,
-      .51,
-      .32,
-      .48,
-      .55,
-      .24,
-      .45,
-      .16,
-      .22,
-      .5,
-      .46,
-      .51,
-    ]),
-    _MetricData(
-      'Temperature',
-      '48 °C',
-      'Within operating range',
-      Icons.thermostat,
-      Color(0xFF55A4FF),
-      [.35, .34, .68, .31, .29, .52, .48, .18, .36, .31, .3, .17],
-    ),
-    _MetricData(
-      'Network latency',
-      '24 ms',
-      'Stable connection',
-      Icons.wifi,
-      Color(0xFF35B8C4),
-      [.5, .31, .38, .24, .42, .25, .16, .38, .3, .32, .7, .28],
-    ),
-    _MetricData(
-      'Mission progress',
-      '64%',
-      'Stage 3 of 5',
-      Icons.schedule,
-      Color(0xFFBF5CFF),
-      [.28, .42, .38, .17, .18, .63, .28, .54, .43, .61, .55, .3],
-    ),
-  ];
-
+  final DashboardData data;
   final _DashboardLayout layout;
 
   @override
-  Widget build(BuildContext context) => switch (layout) {
-    _DashboardLayout.compact => SizedBox(
-      height: 108,
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: SizedBox(height: 100, child: _MetricCard(data: metrics[0])),
+  Widget build(BuildContext context) {
+    final telemetry = data.telemetryConnected ? data.telemetry : null;
+    String value(num? number, String unit) => number == null
+        ? '--'
+        : '${number is int ? number : number.toStringAsFixed(1)}$unit';
+    List<double?> series(num? Function(DashboardTelemetry) read) =>
+        data.telemetryConnected
+        ? data.telemetryHistory
+              .map((sample) {
+                final number = read(sample);
+                return number != null && number.isFinite
+                    ? number.toDouble()
+                    : null;
+              })
+              .toList(growable: false)
+        : const [];
+    final metrics = [
+      _MetricData(
+        'Battery',
+        value(telemetry?.batterySoc, '%'),
+        'SOH ${value(telemetry?.batterySoh, '%')}',
+        Icons.battery_std_outlined,
+        AppColors.success,
+        series((sample) => sample.batterySoc),
+        percentage: true,
       ),
-    ),
-    _DashboardLayout.medium => SizedBox(
-      height: 324,
-      child: Column(
-        children: [
-          _MetricRow(left: metrics[0], right: metrics[1]),
-          const SizedBox(height: 12),
-          _MetricRow(left: metrics[2], right: metrics[3]),
-          const SizedBox(height: 12),
-          _MetricRow(left: metrics[4]),
-        ],
+      _MetricData(
+        'BMS temperature',
+        value(telemetry?.maxBmsTemperature, ' °C'),
+        'Maximum BMS sensor',
+        Icons.thermostat_outlined,
+        AppColors.primary,
+        series((sample) => sample.maxBmsTemperature),
       ),
-    ),
-    _DashboardLayout.expanded => SizedBox(
-      height: 96,
-      child: Row(
-        children: [
-          for (var index = 0; index < metrics.length; index++) ...[
-            Expanded(child: _MetricCard(data: metrics[index])),
-            if (index < metrics.length - 1) const SizedBox(width: 12),
+      _MetricData(
+        'IMU temperature',
+        value(telemetry?.imuTemperature, ' °C'),
+        'IMU sensor',
+        Icons.thermostat_outlined,
+        AppColors.info,
+        series((sample) => sample.imuTemperature),
+      ),
+      _MetricData(
+        'Motor temperature',
+        value(telemetry?.maxMotorTemperature, ' °C'),
+        'Maximum motor sensor',
+        Icons.thermostat_outlined,
+        AppColors.tertiary,
+        series((sample) => sample.maxMotorTemperature),
+      ),
+      _MetricData(
+        'Active motors',
+        value(telemetry?.activeMotorCount, ''),
+        'Distinct reported indices',
+        Icons.settings_outlined,
+        AppColors.secondary,
+        null,
+      ),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = switch (layout) {
+          _DashboardLayout.compact => 1,
+          _DashboardLayout.medium => 2,
+          _DashboardLayout.expanded => 5,
+        };
+        final width = (constraints.maxWidth - 12 * (columns - 1)) / columns;
+        final textScale = MediaQuery.textScalerOf(context).scale(12) / 12;
+        final height = 140.0 + (textScale > 1 ? (textScale - 1) * 80 : 0);
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (final metric in metrics)
+              SizedBox(
+                width: width,
+                height: height,
+                child: _MetricCard(data: metric),
+              ),
           ],
-        ],
-      ),
-    ),
-  };
-}
-
-class _MetricRow extends StatelessWidget {
-  const _MetricRow({required this.left, this.right});
-
-  final _MetricData left;
-  final _MetricData? right;
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-    height: 100,
-    child: Row(
-      children: [
-        Expanded(child: _MetricCard(data: left)),
-        const SizedBox(width: 12),
-        Expanded(
-          child: right == null
-              ? const SizedBox.expand()
-              : _MetricCard(data: right!),
-        ),
-      ],
-    ),
-  );
+        );
+      },
+    );
+  }
 }
 
 class _MetricData {
@@ -821,15 +843,17 @@ class _MetricData {
     this.detail,
     this.icon,
     this.color,
-    this.points,
-  );
+    this.points, {
+    this.percentage = false,
+  });
 
   final String label;
   final String value;
   final String detail;
   final IconData icon;
   final Color color;
-  final List<double> points;
+  final List<double?>? points;
+  final bool percentage;
 }
 
 class _MetricCard extends StatelessWidget {
@@ -838,119 +862,205 @@ class _MetricCard extends StatelessWidget {
   final _MetricData data;
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: Colors.transparent,
-    child: InkWell(
-      borderRadius: BorderRadius.circular(20),
-      onTap: () => _showDashboardMessage(
-        context,
-        '${data.label}: ${data.value} — ${data.detail}',
-      ),
-      child: _GlassPanel(
-        radius: 20,
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-        child: Stack(
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  data.label,
-                  style: const TextStyle(
-                    color: Color(0xFF49454F),
-                    fontSize: 12,
-                    height: 16 / 12,
-                    fontWeight: FontWeight.w500,
+  Widget build(BuildContext context) {
+    final points = data.points;
+    final available = data.value != '--';
+    final hasHistory = points != null && points.whereType<double>().isNotEmpty;
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => _showDashboardMessage(
+          context,
+          '${data.label}: ${data.value} — ${data.detail}',
+        ),
+        child: _GlassPanel(
+          radius: 20,
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(data.icon, size: 18, color: data.color),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      data.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        fontSize: 11,
+                        height: 16 / 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                   ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                data.value,
+                maxLines: 1,
+                style: TextStyle(
+                  color: scheme.onSurface,
+                  fontSize: 24,
+                  height: 1.2,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'Roboto Mono',
                 ),
-                Text(
-                  data.value,
-                  style: const TextStyle(
-                    color: Color(0xFF1B1B1F),
-                    fontSize: 14,
-                    height: 20 / 14,
-                    fontFamily: 'Roboto Mono',
-                  ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                data.detail,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: scheme.onSurfaceVariant,
+                  fontSize: 11,
+                  height: 16 / 11,
                 ),
-                Text(
-                  data.detail,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF49454F),
-                    fontSize: 12,
-                    height: 16 / 12,
-                  ),
-                ),
-              ],
-            ),
-            Positioned(
-              right: 0,
-              top: -3,
-              child: Container(
-                width: 28,
+              ),
+              const Spacer(),
+              SizedBox(
                 height: 28,
-                decoration: const BoxDecoration(
-                  color: Color(0xBFFFFFFF),
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(color: Color(0x18333D75), blurRadius: 8),
-                  ],
-                ),
-                child: Icon(data.icon, size: 18, color: data.color),
+                width: double.infinity,
+                child: points == null
+                    ? Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: data.color.withValues(alpha: .08),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            available ? 'Telemetry received' : 'Unavailable',
+                            style: TextStyle(color: data.color, fontSize: 10),
+                          ),
+                        ),
+                      )
+                    : hasHistory
+                    ? Tooltip(
+                        message:
+                            'Last 5 minutes, sampled every 5 seconds. '
+                            '${data.percentage ? 'Scale: 0–100%.' : 'Local temperature scale.'} '
+                            'Missing readings appear as gaps.',
+                        child: Semantics(
+                          label:
+                              '${data.label} 5-minute trend from ${points.length} received samples',
+                          child: RepaintBoundary(
+                            child: CustomPaint(
+                              painter: _SparklinePainter(
+                                points: points,
+                                color: data.color,
+                                percentage: data.percentage,
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                    : Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Waiting for telemetry',
+                          style: TextStyle(
+                            color: scheme.onSurfaceVariant,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ),
               ),
-            ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: 18,
-              child: CustomPaint(
-                painter: _SparklinePainter(
-                  points: data.points,
-                  color: data.color,
-                ),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _SparklinePainter extends CustomPainter {
-  const _SparklinePainter({required this.points, required this.color});
+  const _SparklinePainter({
+    required this.points,
+    required this.color,
+    required this.percentage,
+  });
 
-  final List<double> points;
+  final List<double?> points;
   final Color color;
+  final bool percentage;
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (points.length < 2) {
-      return;
+    final values = points
+        .whereType<double>()
+        .where((value) => value.isFinite)
+        .toList();
+    if (values.isEmpty || size.isEmpty) return;
+    var minimum = values.first;
+    var maximum = values.first;
+    for (final value in values) {
+      if (value < minimum) minimum = value;
+      if (value > maximum) maximum = value;
     }
-    final paint = Paint()
+    // Pad small changes so sensor noise isn't drawn as a full-height swing.
+    final padding = (maximum - minimum) * .2 < 1
+        ? 1.0
+        : (maximum - minimum) * .2;
+    final low = percentage ? 0.0 : minimum - padding;
+    final high = percentage ? 100.0 : maximum + padding;
+    final line = Paint()
       ..color = color
       ..strokeWidth = 1.8
       ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
     final path = Path();
+    var connected = false;
+    Offset? last;
     for (var index = 0; index < points.length; index++) {
-      final x = size.width * index / (points.length - 1);
-      final y = size.height * (1 - points[index].clamp(0, 1));
-      if (index == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
+      final value = points[index];
+      if (value == null || !value.isFinite) {
+        connected = false;
+        last = null;
+        continue;
       }
+      // 61 samples span about 5 minutes; no invented leading data.
+      final x = 2 + (size.width - 4) * (61 - points.length + index) / 60;
+      final y =
+          3 +
+          (size.height - 6) * (1 - ((value - low) / (high - low)).clamp(0, 1));
+      final point = Offset(x, y);
+      if (connected) {
+        path.lineTo(x, y);
+      } else {
+        path.moveTo(x, y);
+        canvas.drawCircle(point, 1.3, Paint()..color = color);
+      }
+      connected = true;
+      last = point;
     }
-    canvas.drawPath(path, paint);
+    canvas.drawPath(path, line);
+    if (last != null) {
+      canvas.drawCircle(
+        last,
+        3.5,
+        Paint()..color = color.withValues(alpha: .15),
+      );
+      canvas.drawCircle(last, 2, Paint()..color = color);
+    }
   }
 
   @override
   bool shouldRepaint(_SparklinePainter oldDelegate) =>
-      oldDelegate.points != points || oldDelegate.color != color;
+      oldDelegate.points != points ||
+      oldDelegate.color != color ||
+      oldDelegate.percentage != percentage;
 }
 
 class _OperationalGrid extends StatelessWidget {
@@ -1011,6 +1121,7 @@ class _PrimaryColumn extends StatelessWidget {
     final actionHeight = layout == _DashboardLayout.expanded ? 158.0 : 252.0;
     final gap = layout == _DashboardLayout.expanded ? 14.0 : 16.0;
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SizedBox(
           height: missionHeight,
@@ -1040,7 +1151,7 @@ class _MissionCard extends StatelessWidget {
         const _PanelTitle('Active mission'),
         const SizedBox(height: 12),
         const Text(
-          'Warehouse aisle inspection',
+          'Mission telemetry unavailable',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
@@ -1050,7 +1161,7 @@ class _MissionCard extends StatelessWidget {
           ),
         ),
         const Text(
-          'Scanning aisle B · Estimated completion 14:42',
+          'No mission data in this telemetry stream',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
@@ -1060,54 +1171,7 @@ class _MissionCard extends StatelessWidget {
           ),
         ),
         const Spacer(),
-        const _MissionProgress(),
-      ],
-    ),
-  );
-}
-
-class _MissionProgress extends StatelessWidget {
-  const _MissionProgress();
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-    height: 24,
-    child: Row(
-      children: [
-        Expanded(
-          child: Stack(
-            alignment: Alignment.centerLeft,
-            children: [
-              Container(
-                height: 8,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE5E1E6),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-              FractionallySizedBox(
-                widthFactor: .64,
-                child: Container(
-                  height: 8,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF7A1FF2), Color(0xFF9E2EFF)],
-                    ),
-                    borderRadius: BorderRadius.circular(999),
-                    boxShadow: const [
-                      BoxShadow(color: Color(0x477A24FF), blurRadius: 7),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 12),
-        const Text(
-          '64%',
-          style: TextStyle(fontSize: 12, color: Color(0xFF1B1B1F)),
-        ),
+        const Text('--'),
       ],
     ),
   );
@@ -1254,11 +1318,22 @@ class _AttentionColumn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final expanded = layout == _DashboardLayout.expanded;
+    final alertsHeight = switch (layout) {
+      _DashboardLayout.compact => 168.0,
+      _DashboardLayout.medium => 172.0,
+      _DashboardLayout.expanded => 158.0,
+    };
+    final summaryHeight = switch (layout) {
+      _DashboardLayout.compact => 128.0,
+      _DashboardLayout.medium => 252.0,
+      _DashboardLayout.expanded => 158.0,
+    };
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(height: expanded ? 174 : 168, child: const _AlertsCard()),
+        SizedBox(height: alertsHeight, child: const _AlertsCard()),
         SizedBox(height: expanded ? 14 : 16),
-        SizedBox(height: expanded ? 142 : 128, child: const _AiSummary()),
+        SizedBox(height: summaryHeight, child: const _AiSummary()),
       ],
     );
   }
@@ -1285,18 +1360,18 @@ class _AlertsCard extends StatelessWidget {
                   height: double.infinity,
                   padding: const EdgeInsets.symmetric(horizontal: 13),
                   decoration: BoxDecoration(
-                    color: const Color(0xD9DDF8E8),
+                    color: const Color(0xFFE5E1E6),
                     borderRadius: BorderRadius.circular(13),
-                    border: Border.all(color: const Color(0x382DB46E)),
+                    border: Border.all(color: const Color(0x3849454F)),
                   ),
                   child: const Row(
                     children: [
-                      _Dot(color: Color(0xFF1AAF68)),
+                      _Dot(color: Color(0xFF79747E)),
                       SizedBox(width: 8),
                       Text(
-                        'Nominal',
+                        'Unknown',
                         style: TextStyle(
-                          color: Color(0xFF167A46),
+                          color: Color(0xFF49454F),
                           fontSize: 14,
                         ),
                       ),
@@ -1310,19 +1385,19 @@ class _AlertsCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'No active alerts',
+                        'Alerts unavailable',
                         maxLines: 1,
                         style: TextStyle(
-                          color: AppColors.warning,
+                          color: Color(0xFF49454F),
                           fontSize: 14,
                         ),
                       ),
                       Text(
-                        'All monitored systems are within operating thresholds',
+                        'Safety status is not provided by this telemetry stream',
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: AppColors.warning,
+                          color: Color(0xFF49454F),
                           fontSize: 12,
                         ),
                       ),
@@ -1355,7 +1430,7 @@ class _AiSummary extends StatelessWidget {
               child: Padding(
                 padding: EdgeInsets.only(right: 44),
                 child: Text(
-                  'Robot is operating normally. Battery is sufficient for approximately 2 hours. No operator intervention is required.',
+                  'AI summary unavailable from this telemetry stream.',
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -1404,11 +1479,7 @@ class _RecentActivity extends StatelessWidget {
   const _RecentActivity({required this.layout});
 
   static const events = [
-    _ActivityData('14:18  Mission stage completed · Aisle A'),
-    _ActivityData('14:12  Vision calibration verified'),
-    _ActivityData('14:08  Warning acknowledged by operator', warning: true),
-    _ActivityData('13:56  Mission started · Warehouse inspection'),
-    _ActivityData('13:52  Robot entered autonomous mode'),
+    _ActivityData('Activity history unavailable from this telemetry stream'),
   ];
 
   final _DashboardLayout layout;
@@ -1418,7 +1489,7 @@ class _RecentActivity extends StatelessWidget {
     final expanded = layout == _DashboardLayout.expanded;
     final visibleEvents = expanded ? events.take(2) : events;
     return SizedBox(
-      height: expanded ? 164 : 616,
+      height: expanded ? 164 : 180,
       child: _GlassPanel(
         padding: EdgeInsets.fromLTRB(18, 16, 18, expanded ? 10 : 14),
         child: Column(
@@ -1442,10 +1513,10 @@ class _RecentActivity extends StatelessWidget {
 }
 
 class _ActivityData {
-  const _ActivityData(this.label, {this.warning = false});
+  const _ActivityData(this.label);
 
   final String label;
-  final bool warning;
+  final bool warning = false;
 }
 
 class _ActivityItem extends StatelessWidget {

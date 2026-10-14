@@ -1,11 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:robot_control_app/core/theme/app_spacing.dart';
+import 'package:robot_control_app/core/theme/app_colors.dart';
 import 'package:robot_control_app/core/theme/theme_provider.dart';
 import 'package:robot_control_app/features/settings/application/connectivity_state.dart';
 import 'package:robot_control_app/features/settings/application/settings_state.dart';
+import 'package:robot_control_app/features/dashboard/application/dashboard_controller.dart';
+import 'package:robot_control_app/services/robot_connection.dart';
+import 'package:robot_control_app/services/robot_authentication.dart';
 
 part 'connectivity_panel.dart';
+part 'robot_connection_panel.dart';
 
 const _background = Color(0xFFF1F5FF);
 const _surface = Color(0xFFFFFFFF);
@@ -1766,6 +1774,7 @@ class _SearchField extends StatelessWidget {
 
 class _GlassCard extends StatelessWidget {
   const _GlassCard({
+    super.key,
     required this.radius,
     required this.padding,
     required this.child,
