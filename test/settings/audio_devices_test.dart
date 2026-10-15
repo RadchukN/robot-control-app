@@ -8,7 +8,7 @@ import 'package:robot_control_app/features/dashboard/application/dashboard_contr
 import 'package:robot_control_app/features/settings/application/audio_devices_controller.dart';
 import 'package:robot_control_app/features/settings/application/settings_state.dart';
 import 'package:robot_control_app/features/settings/data/audio_device_backend.dart';
-import 'package:robot_control_app/features/settings/data/audio_device_protocol.dart';
+import 'package:robot_control_app/features/settings/data/live_audio_device_backend.dart';
 import 'package:robot_control_app/features/settings/presentation/settings_screen.dart';
 import 'package:robot_control_app/features/voice_studio/application/voice_studio_providers.dart';
 import 'package:robot_control_app/features/voice_studio/domain/voice_models.dart';
@@ -18,280 +18,531 @@ import 'package:robot_control_app/shared/notifications/app_notification_service.
 
 import '../robot_authentication_test.dart' show MemoryTokenStore;
 import '../voice_studio/voice_test_helpers.dart';
+import 'fake_jetson_audio.dart';
 
 const _input = AudioDeviceDirection.input;
 const _output = AudioDeviceDirection.output;
-const _usbMic = MockAudioDeviceBackend.usbMicId;
-const _mic = MockAudioDeviceBackend.micId;
-const _speaker = MockAudioDeviceBackend.speakerId;
-const _default = MockAudioDeviceBackend.defaultId;
-
-/// Never answers, to exercise request timeouts.
-class _SilentBackend extends MockAudioDeviceBackend {
-  @override
-  Future<List<AudioDevice>> getDevices() =>
-      Completer<List<AudioDevice>>().future;
-}
-
-ProviderContainer _container({
-  AudioDeviceBackend? backend,
-  List<String>? motionCalls,
-}) => ProviderContainer(
-  overrides: [
-    robotTokenStoreProvider.overrideWithValue(MemoryTokenStore()),
-    dashboardControllerProvider.overrideWith(
-      () => RecordingDashboardController(motionCalls ?? []),
-    ),
-    if (backend != null) audioDeviceBackendProvider.overrideWithValue(backend),
-  ],
-);
+const _dji = FakeJetsonAudio.djiId;
 
 List<String> _notes(ProviderContainer c) => [
   for (final n in c.read(appNotificationsProvider).visible) n.title,
   for (final n in c.read(appNotificationsProvider).queued) n.title,
 ];
 
+/// Live mode over the fake Jetson: Demo Mode off, robot link open.
+ProviderContainer _live(FakeJetsonAudio jetson, {List<String>? motionCalls}) {
+  final c = ProviderContainer(
+    overrides: [
+      robotTokenStoreProvider.overrideWithValue(MemoryTokenStore()),
+      dashboardControllerProvider.overrideWith(
+        () => RecordingDashboardController(motionCalls ?? []),
+      ),
+      audioFrameTransportProvider.overrideWithValue(jetson),
+    ],
+  );
+  c.read(voiceDemoModeProvider.notifier).set(false);
+  c
+      .read(robotLinkProvider.notifier)
+      .update(const RobotLinkState(RobotLinkStatus.connected));
+  return c;
+}
+
 Future<AudioDevicesState> _loaded(
   WidgetTester tester,
   ProviderContainer c,
 ) async {
   c.read(audioDevicesProvider);
-  await tester.pump();
-  await tester.pump();
+  for (var i = 0; i < 4; i++) {
+    await tester.pump();
+  }
   return c.read(audioDevicesProvider);
 }
 
 void main() {
-  group('AudioDevicesController', () {
-    testWidgets('Demo Mode discovers clearly simulated devices', (
+  group('LiveAudioDeviceBackend', () {
+    testWidgets('correlates replies by request id and ignores strangers', (
       tester,
     ) async {
-      final c = _container();
+      final jetson = FakeJetsonAudio(supportsAudio: false);
+      final backend = LiveAudioDeviceBackend(jetson);
+      addTearDown(backend.dispose);
+      final devices = backend.getDevices();
+      final id = jetson.sent.single['request_id']! as String;
+      expect(jetson.sent.single, {
+        'type': 'audio_get_devices',
+        'request_id': id,
+      });
+      expect(id.length, inInclusiveRange(1, 64));
+
+      var done = false;
+      unawaited(devices.then((_) => done = true));
+      jetson.push({
+        'type': 'audio_devices',
+        'request_id': 'other',
+        'inputs': <Object>[],
+        'outputs': <Object>[],
+      });
+      await tester.pump();
+      expect(done, isFalse, reason: 'unrelated reply ignored');
+      jetson.push({
+        'type': 'audio_devices',
+        'request_id': id,
+        'inputs': [
+          FakeJetsonAudio.device(_dji, 'input', 'usb', 'DJI Wireless Mic Rx'),
+        ],
+        'outputs': <Object>[],
+      });
+      expect((await devices).single.id, _dji);
+    });
+
+    testWidgets('a backend without audio support times out after 3 s', (
+      tester,
+    ) async {
+      final backend = LiveAudioDeviceBackend(
+        FakeJetsonAudio(supportsAudio: false),
+      );
+      addTearDown(backend.dispose);
+      Object? error;
+      unawaited(
+        backend.getCapabilities().then(
+          (_) {},
+          onError: (Object e) => error = e,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 2900));
+      expect(error, isNull);
+      await tester.pump(const Duration(milliseconds: 200));
+      expect((error! as AudioDeviceException).code, 'unsupported');
+    });
+
+    testWidgets('set_settings: push first, then the correlated result', (
+      tester,
+    ) async {
+      final jetson = FakeJetsonAudio();
+      final backend = LiveAudioDeviceBackend(jetson);
+      addTearDown(backend.dispose);
+      final events = <AudioBackendEvent>[];
+      backend.events.listen(events.add);
+      final saved = await backend.applySettings(
+        const AudioDeviceSettings(outputId: 'robot:speaker'),
+      );
+      expect(
+        jetson.sent.single.keys,
+        unorderedEquals(['type', 'request_id', 'output_device_id']),
+      );
+      expect(saved.outputId, 'robot:speaker');
+      expect(saved.inputId, _dji, reason: 'other direction kept');
+      expect(events.single, isA<AudioStatusPushed>());
+    });
+
+    testWidgets('busy and rejected results become typed errors', (
+      tester,
+    ) async {
+      final jetson = FakeJetsonAudio()..sessionOwner = 'realtime_voice';
+      final backend = LiveAudioDeviceBackend(jetson);
+      addTearDown(backend.dispose);
+      await expectLater(
+        backend.applySettings(const AudioDeviceSettings(inputId: _dji)),
+        throwsA(
+          isA<AudioDeviceException>()
+              .having((e) => e.busy, 'busy', isTrue)
+              .having((e) => e.owner, 'owner', 'realtime_voice'),
+        ),
+      );
+      jetson.sessionOwner = null;
+      await expectLater(
+        backend.applySettings(const AudioDeviceSettings(inputId: 'usb:gone')),
+        throwsA(
+          isA<AudioDeviceException>().having(
+            (e) => e.code,
+            'code',
+            'device_unavailable',
+          ),
+        ),
+      );
+    });
+
+    testWidgets('a test waits past `accepted` and may finish out of order', (
+      tester,
+    ) async {
+      final jetson = FakeJetsonAudio(
+        testsEnabled: true,
+        autoCompleteTests: false,
+      );
+      final backend = LiveAudioDeviceBackend(jetson);
+      addTearDown(backend.dispose);
+      AudioTestResult? result;
+      unawaited(
+        backend.testInput(_dji, durationSec: 3).then((r) => result = r),
+      );
+      expect(jetson.sent.single['confirm'], isTrue);
+      expect(jetson.sent.single['duration_sec'], 3);
+      await tester.pump();
+      expect(result, isNull, reason: 'accepted is not the result');
+
+      // A later request is answered before the test's final result.
+      final devices = await backend.getDevices();
+      expect(devices, isNotEmpty);
+      expect(result, isNull);
+      jetson.finishTests();
+      await tester.pump();
+      expect(result!.rms, 2226);
+      expect(result!.peakDbfs, -2.6);
+      expect(result!.signal, 'ok');
+      expect(result!.clipping, isFalse);
+    });
+
+    testWidgets('pushes become events; disconnect fails pending requests', (
+      tester,
+    ) async {
+      final jetson = FakeJetsonAudio(supportsAudio: false);
+      final backend = LiveAudioDeviceBackend(jetson);
+      final events = <AudioBackendEvent>[];
+      backend.events.listen(events.add);
+      jetson
+        ..push({
+          'type': 'audio_error',
+          'code': 'input_device_lost',
+          'fatal': false,
+          'owner': 'realtime_voice',
+        })
+        ..push({'type': 'audio_new_future_push', 'x': 1})
+        ..push(jetson.statusBody('audio_device_status', devicesChanged: true));
+      await tester.pump();
+      expect(events, hasLength(2), reason: 'unknown pushed types ignored');
+      expect((events.last as AudioStatusPushed).status.devicesChanged, isTrue);
+
+      final pending = backend.getStatus();
+      backend.dispose();
+      await expectLater(
+        pending,
+        throwsA(
+          isA<AudioDeviceException>().having(
+            (e) => e.code,
+            'code',
+            'disconnected',
+          ),
+        ),
+      );
+      jetson.connected = false;
+      final after = LiveAudioDeviceBackend(jetson);
+      addTearDown(after.dispose);
+      await expectLater(
+        after.getDevices(),
+        throwsA(isA<AudioDeviceException>()),
+      );
+    });
+  });
+
+  group('AudioDevicesController (live)', () {
+    testWidgets('negotiates, discovers and separates saved from active', (
+      tester,
+    ) async {
+      final jetson = FakeJetsonAudio();
+      final c = _live(jetson);
       addTearDown(c.dispose);
       final state = await _loaded(tester, c);
-      expect(state.simulated, isTrue);
-      expect(state.available, isTrue);
-      expect(state.devicesFor(_input), hasLength(3));
-      expect(state.devicesFor(_output), hasLength(3));
-      expect(state.devices.every((d) => d.simulated), isTrue);
+      expect(jetson.sentTypes, [
+        'audio_get_capabilities',
+        'audio_get_devices',
+        'audio_device_status',
+      ]);
+      expect(state.simulated, isFalse);
+      expect(state.devicesFor(_input).map((d) => d.name), [
+        'Unitree G1 microphone',
+        'System default',
+        'DJI Wireless Mic Rx',
+      ]);
+      expect(state.devices.any((d) => d.simulated), isFalse);
+      expect(state.savedId(_input), _dji);
+      expect(state.savedId(_output), 'robot:speaker');
+      expect(state.activeId(_input), isNull, reason: 'no running session');
       expect(
-        state.devices.map((d) => d.name),
-        isNot(contains(contains('RØDE'))),
-        reason: 'no hardcoded vendor device',
+        state.capabilities.inputTest,
+        isFalse,
+        reason: 'tests_enabled false',
       );
-      expect(state.activeInputId, _mic);
       expect(_notes(c), isEmpty, reason: 'background discovery is silent');
-
-      await c.read(audioDevicesProvider.notifier).refresh();
-      expect(_notes(c), ['Audio devices refreshed']);
     });
 
-    testWidgets('microphone and speaker are selected independently', (
+    testWidgets('unsupported backend leaves audio settings unavailable', (
       tester,
     ) async {
-      final motionCalls = <String>[];
-      final c = _container(motionCalls: motionCalls);
+      final jetson = FakeJetsonAudio(supportsAudio: false);
+      final c = _live(jetson);
+      addTearDown(c.dispose);
+      c.read(audioDevicesProvider);
+      await tester.pump(const Duration(seconds: 4));
+      final state = c.read(audioDevicesProvider);
+      expect(state.error, contains('did not answer'));
+      expect(state.devices, isEmpty);
+      expect(jetson.sentTypes, ['audio_get_capabilities']);
+      await c.read(audioDevicesProvider.notifier).select(_input, _dji);
+      expect(jetson.sentTypes, [
+        'audio_get_capabilities',
+      ], reason: 'nothing else sent');
+    });
+
+    testWidgets('independent selection: pending, then saved, never active', (
+      tester,
+    ) async {
+      final jetson = FakeJetsonAudio();
+      final c = _live(jetson);
       addTearDown(c.dispose);
       await _loaded(tester, c);
+      jetson.sent.clear();
       final controller = c.read(audioDevicesProvider.notifier);
 
-      await controller.select(_input, _usbMic);
+      final pending = controller.select(_input, 'system:default');
+      expect(c.read(audioDevicesProvider).applying, isTrue);
+      await pending;
       var state = c.read(audioDevicesProvider);
-      expect(state.activeInputId, _usbMic);
-      expect(state.activeOutputId, _speaker);
-      expect(c.read(settingsProvider).audioInputDeviceId, _usbMic);
-      expect(c.read(settingsProvider).audioOutputDeviceId, isNull);
-
-      await controller.select(_output, _default);
-      state = c.read(audioDevicesProvider);
-      expect(state.activeInputId, _usbMic, reason: 'input unchanged');
-      expect(state.activeOutputId, _default);
-      expect(c.read(settingsProvider).audioOutputDeviceId, _default);
+      expect(jetson.sent.single, {
+        'type': 'audio_set_settings',
+        'request_id': jetson.sent.single['request_id'],
+        'input_device_id': 'system:default',
+      });
+      expect(state.savedId(_input), 'system:default');
       expect(
-        _notes(c),
-        containsAll(['Microphone selected', 'Speaker settings applied']),
+        state.savedId(_output),
+        'robot:speaker',
+        reason: 'output untouched',
       );
-      expect(motionCalls, isEmpty, reason: 'no robot traffic from Demo Mode');
+      expect(state.activeId(_input), isNull);
+      expect(c.read(settingsProvider).audioInputDeviceId, 'system:default');
+      expect(c.read(settingsProvider).audioOutputDeviceId, isNull);
+      expect(_notes(c), ['Microphone selected']);
+
+      jetson.sent.clear();
+      await controller.select(_output, 'robot:speaker');
+      expect(jetson.sent, isEmpty, reason: 'already saved');
+
+      // Active only when the robot reports a running session using it.
+      jetson
+        ..sessionOwner = 'realtime_voice'
+        ..sessionInputId = 'system:default'
+        ..sessionOutputId = 'robot:speaker';
+      jetson.push(jetson.statusBody('audio_device_status'));
+      await tester.pump();
+      state = c.read(audioDevicesProvider);
+      expect(state.activeId(_input), 'system:default');
+      expect(state.backendBusy, isTrue);
     });
 
-    testWidgets('an unplugged device is refused and stays inactive', (
+    testWidgets('robot busy lock blocks changes and tests without sending', (
       tester,
     ) async {
-      final backend = MockAudioDeviceBackend(
-        devices: [
-          ...MockAudioDeviceBackend.demoDevices.where((d) => d.id != _usbMic),
-          const AudioDevice(
-            id: _usbMic,
-            name: 'USB microphone',
-            direction: _input,
-            kind: AudioDeviceKind.usb,
-            connected: false,
-            simulated: true,
-          ),
-        ],
-      );
-      final c = _container(backend: backend);
+      final jetson = FakeJetsonAudio(testsEnabled: true)..sessionOwner = 'tts';
+      final c = _live(jetson);
       addTearDown(c.dispose);
       await _loaded(tester, c);
-      await c.read(audioDevicesProvider.notifier).select(_input, _usbMic);
-      final state = c.read(audioDevicesProvider);
-      expect(state.desiredInputId, _usbMic, reason: 'preference kept');
-      expect(state.activeInputId, _mic, reason: 'not applied');
-      expect(_notes(c), ['Audio device unavailable']);
-    });
-
-    testWidgets('changes and tests are refused during a voice session', (
-      tester,
-    ) async {
-      final c = _container();
-      addTearDown(c.dispose);
-      await _loaded(tester, c);
-      c.read(audioSessionProvider.notifier).acquire(AudioOwner.realtime);
+      jetson.sent.clear();
       final controller = c.read(audioDevicesProvider.notifier);
-      await controller.select(_output, _default);
-      await controller.toggleTest(_input);
-      final state = c.read(audioDevicesProvider);
-      expect(state.activeOutputId, _speaker);
-      expect(state.desiredOutputId, isNull);
-      expect(state.inputTest, AudioTestState.idle);
+      await controller.select(_input, 'system:default');
+      await controller.toggleTest(_output);
+      expect(jetson.sent, isEmpty);
+      expect(c.read(audioDevicesProvider).savedId(_input), _dji);
       expect(_notes(c), ['Voice session is active']);
     });
 
-    testWidgets('tests are bounded, explicit and cancellable', (tester) async {
-      final c = _container();
+    testWidgets('a busy reply from the robot is authoritative', (tester) async {
+      final jetson = FakeJetsonAudio();
+      final c = _live(jetson);
       addTearDown(c.dispose);
       await _loaded(tester, c);
-      final controller = c.read(audioDevicesProvider.notifier);
-
-      final mic = controller.toggleTest(_input);
-      expect(c.read(audioDevicesProvider).inputTest, AudioTestState.running);
-      await tester.pump(MockAudioDeviceBackend.inputTestDuration);
-      await mic;
-      expect(c.read(audioDevicesProvider).inputTest, AudioTestState.passed);
-      expect(_notes(c), contains('Microphone test passed'));
-
-      final speaker = controller.toggleTest(_output);
-      expect(c.read(audioDevicesProvider).outputTest, AudioTestState.running);
-      await controller.toggleTest(_output);
-      await speaker;
-      expect(c.read(audioDevicesProvider).outputTest, AudioTestState.cancelled);
-      expect(_notes(c), contains('Speaker test cancelled'));
-    });
-
-    testWidgets('a silent backend times out instead of loading forever', (
-      tester,
-    ) async {
-      final c = _container(backend: _SilentBackend());
-      addTearDown(c.dispose);
-      c.read(audioDevicesProvider);
-      await tester.pump();
-      expect(c.read(audioDevicesProvider).loading, isTrue);
-      await tester.pump(AudioDevicesController.requestTimeout);
+      // The robot became busy before Flutter saw a status push.
+      jetson.sessionOwner = 'realtime_voice';
+      await c
+          .read(audioDevicesProvider.notifier)
+          .select(_input, 'system:default');
       final state = c.read(audioDevicesProvider);
-      expect(state.loading, isFalse);
-      expect(state.error, contains('did not respond'));
+      expect(state.savedId(_input), _dji);
+      expect(
+        state.desiredInputId,
+        'system:default',
+        reason: 'kept as local choice',
+      );
+      expect(_notes(c), ['Robot audio is busy']);
     });
 
-    testWidgets('live mode is unavailable and never claims devices', (
+    testWidgets('Flutter voice session also blocks changes', (tester) async {
+      final jetson = FakeJetsonAudio();
+      final c = _live(jetson);
+      addTearDown(c.dispose);
+      await _loaded(tester, c);
+      jetson.sent.clear();
+      c.read(audioSessionProvider.notifier).acquire(AudioOwner.realtime);
+      await c
+          .read(audioDevicesProvider.notifier)
+          .select(_input, 'system:default');
+      expect(jetson.sent, isEmpty);
+    });
+
+    testWidgets('unplugged selection stays visible and is never replaced', (
       tester,
     ) async {
-      final c = _container();
+      final jetson = FakeJetsonAudio();
+      final c = _live(jetson);
       addTearDown(c.dispose);
-      c.read(voiceDemoModeProvider.notifier).set(false);
+      await _loaded(tester, c);
+      jetson.sent.clear();
+      jetson.inputs = jetson.inputs.where((d) => d['id'] != _dji).toList();
+      jetson
+        ..push({
+          'type': 'audio_error',
+          'code': 'selected_device_disconnected',
+          'fatal': false,
+          'direction': 'input',
+          'device_id': _dji,
+          'session_active': false,
+        })
+        ..push(jetson.statusBody('audio_device_status', devicesChanged: true));
+      await tester.pump();
+      await tester.pump();
+      final state = c.read(audioDevicesProvider);
+      expect(jetson.sentTypes, [
+        'audio_get_devices',
+      ], reason: 're-request devices');
+      expect(state.device(_input, _dji), isNull);
+      expect(state.savedId(_input), _dji, reason: 'never replaced');
+      expect(
+        state.savedSelection(_input)!.status,
+        AudioSelectionStatus.disconnected,
+      );
+      expect(_notes(c), ['Audio device disconnected']);
+    });
+
+    testWidgets('reconnect refreshes and never replays a settings change', (
+      tester,
+    ) async {
+      final jetson = FakeJetsonAudio();
+      final c = _live(jetson);
+      addTearDown(c.dispose);
+      await _loaded(tester, c);
+      await c
+          .read(audioDevicesProvider.notifier)
+          .select(_input, 'system:default');
+      final link = c.read(robotLinkProvider.notifier);
+      link.update(const RobotLinkState(RobotLinkStatus.reconnecting));
+      expect(c.read(audioDevicesProvider).available, isFalse);
+      jetson.sent.clear();
+      link.update(const RobotLinkState(RobotLinkStatus.connected));
       final state = await _loaded(tester, c);
-      expect(state.simulated, isFalse);
-      expect(state.available, isFalse);
-      expect(state.unavailableReason, contains('not available'));
-      expect(state.devices, isEmpty);
-      expect(state.activeInputId, isNull);
-      final controller = c.read(audioDevicesProvider.notifier);
-      await controller.select(_input, _mic);
-      expect(c.read(settingsProvider).audioInputDeviceId, isNull);
-      await controller.refresh();
-      expect(_notes(c), contains('Audio device unavailable'));
-    });
-  });
-
-  group('AudioDeviceProtocol (provisional)', () {
-    test('passes backend ids through unchanged', () {
-      const usb = 'usb:0x0d8c:0x0014:1-2.3';
-      expect(
-        AudioDeviceProtocol.setSettings(
-          'r1',
-          const AudioDeviceSettings(inputId: usb, outputId: 'robot:speaker'),
-        ),
-        {
-          'type': 'audio_set_settings',
-          'v': 1,
-          'request_id': 'r1',
-          'input_id': usb,
-          'output_id': 'robot:speaker',
-        },
-      );
-      expect(AudioDeviceProtocol.testInput('r2', usb)['device_id'], usb);
-      expect(
-        AudioDeviceProtocol.testOutput('r3', 'system:default')['device_id'],
-        'system:default',
-      );
+      expect(jetson.sentTypes, [
+        'audio_get_capabilities',
+        'audio_get_devices',
+        'audio_device_status',
+      ]);
+      expect(state.savedId(_input), 'system:default', reason: 'from the robot');
     });
 
-    test('decodes devices, skipping malformed entries and other versions', () {
-      final devices = AudioDeviceProtocol.decodeDevices({
-        'type': 'audio_devices',
-        'v': 1,
-        'devices': [
-          {
-            'id': 'robot:mic',
-            'name': 'G1 mic',
-            'direction': 'input',
-            'kind': 'robot',
-          },
-          {
-            'id': 'usb:0x19f7:0x0003:1-2.1',
-            'name': 'RØDE NT-USB',
-            'direction': 'input',
-            'kind': 'usb',
-            'connected': false,
-          },
-          {'id': 3, 'name': 'bad', 'direction': 'input'},
-          {'id': 'x', 'name': 'no direction'},
+    testWidgets('settings file invalid is a configuration failure', (
+      tester,
+    ) async {
+      final jetson = FakeJetsonAudio()..settingsFileInvalid = true;
+      final c = _live(jetson);
+      addTearDown(c.dispose);
+      final state = await _loaded(tester, c);
+      expect(state.status!.settingsFile, AudioSettingsFileStatus.invalid);
+      expect(
+        state.savedSelection(_input)!.source,
+        AudioSelectionSource.envFallback,
+      );
+      jetson.push({
+        'type': 'audio_error',
+        'code': 'settings_file_invalid',
+        'fatal': false,
+        'fallback': 'env',
+      });
+      await tester.pump();
+      expect(_notes(c), ['Audio configuration failure']);
+    });
+
+    testWidgets('tests: gated by tests_enabled, measured, not cancellable', (
+      tester,
+    ) async {
+      final disabled = FakeJetsonAudio();
+      final c1 = _live(disabled);
+      addTearDown(c1.dispose);
+      await _loaded(tester, c1);
+      disabled.sent.clear();
+      await c1.read(audioDevicesProvider.notifier).toggleTest(_input);
+      expect(disabled.sent, isEmpty, reason: 'tests_enabled false');
+
+      final jetson = FakeJetsonAudio(testsEnabled: true);
+      final c = _live(jetson);
+      addTearDown(c.dispose);
+      await _loaded(tester, c);
+      jetson.sent.clear();
+      await c.read(audioDevicesProvider.notifier).toggleTest(_input);
+      expect(jetson.sent.single, containsPair('confirm', true));
+      expect(jetson.sent.single, containsPair('device_id', _dji));
+      final state = c.read(audioDevicesProvider);
+      expect(state.inputTest, AudioTestState.passed);
+      expect(state.inputTestMessage, contains('RMS 2226'));
+      expect(state.inputTestMessage, contains('-2.6 dBFS'));
+
+      jetson
+        ..autoCompleteTests = false
+        ..sent.clear();
+      final speaker = c.read(audioDevicesProvider.notifier).toggleTest(_output);
+      expect(c.read(audioDevicesProvider).outputTest, AudioTestState.running);
+      await c.read(audioDevicesProvider.notifier).toggleTest(_output);
+      expect(c.read(audioDevicesProvider).outputTest, AudioTestState.cancelled);
+      expect(
+        c.read(audioDevicesProvider).outputTestMessage,
+        contains('may still finish'),
+      );
+      expect(jetson.sentTypes, [
+        'audio_test_output',
+      ], reason: 'no cancel message exists');
+      jetson.finishTests();
+      await speaker;
+      expect(
+        c.read(audioDevicesProvider).outputTest,
+        AudioTestState.cancelled,
+        reason: 'late result does not overwrite',
+      );
+    });
+
+    testWidgets('Demo Mode never sends audio frames', (tester) async {
+      final jetson = FakeJetsonAudio();
+      final motionCalls = <String>[];
+      final c = ProviderContainer(
+        overrides: [
+          dashboardControllerProvider.overrideWith(
+            () => RecordingDashboardController(motionCalls),
+          ),
+          audioFrameTransportProvider.overrideWithValue(jetson),
         ],
-      })!;
-      expect(devices.map((d) => d.name), ['G1 mic', 'RØDE NT-USB']);
-      expect(devices.map((d) => d.id), [
-        'robot:mic',
-        'usb:0x19f7:0x0003:1-2.1',
-      ], reason: 'ids are preserved verbatim');
-      expect(devices.last.connected, isFalse);
-      expect(devices.last.kind, AudioDeviceKind.usb);
-      expect(
-        AudioDeviceProtocol.decodeDevices({'type': 'audio_devices', 'v': 2}),
-        isNull,
       );
+      addTearDown(c.dispose);
+      c
+          .read(robotLinkProvider.notifier)
+          .update(const RobotLinkState(RobotLinkStatus.connected));
+      final state = await _loaded(tester, c);
+      expect(state.simulated, isTrue);
+      final controller = c.read(audioDevicesProvider.notifier);
+      await controller.select(_input, MockAudioDeviceBackend.usbMicId);
+      final test = controller.toggleTest(_output);
+      await tester.pump(MockAudioDeviceBackend.outputTestDuration);
+      await test;
+      expect(jetson.sent, isEmpty);
+      expect(motionCalls, isEmpty);
     });
   });
 
-  group('Audio devices card', () {
-    Future<ProviderContainer> mount(
+  group('Audio devices card (live)', () {
+    Future<(ProviderContainer, FakeJetsonAudio)> mount(
       WidgetTester tester, {
+      bool testsEnabled = false,
       Size size = const Size(1200, 1400),
-      bool demo = true,
     }) async {
       await tester.binding.setSurfaceSize(size);
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      final c = ProviderContainer(
-        overrides: [
-          robotTokenStoreProvider.overrideWithValue(MemoryTokenStore()),
-          robotEndpointProvider.overrideWithValue(
-            const RobotEndpoint(ip: '192.168.123.164'),
-          ),
-          dashboardControllerProvider.overrideWith(
-            () => RecordingDashboardController([]),
-          ),
-        ],
-      );
+      final jetson = FakeJetsonAudio(testsEnabled: testsEnabled);
+      final c = _live(jetson);
       addTearDown(c.dispose);
-      if (!demo) c.read(voiceDemoModeProvider.notifier).set(false);
       await tester.pumpWidget(
         UncontrolledProviderScope(
           container: c,
@@ -307,110 +558,116 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      return c;
+      return (c, jetson);
     }
 
     Finder key(String k) => find.byKey(Key(k));
 
-    testWidgets('renders under the existing connection cards', (tester) async {
+    testWidgets('shows real devices and saved, not active, state', (
+      tester,
+    ) async {
       await mount(tester);
-      for (final existing in [
-        'robot-connection-card',
-        'robot-connect-button',
-        'connection-two-columns',
-      ]) {
-        expect(key(existing), findsOneWidget, reason: existing);
-      }
-      expect(key('audio-devices-card'), findsOneWidget);
+      expect(key('connection-two-columns'), findsOneWidget);
+      expect(find.text('DJI Wireless Mic Rx'), findsOneWidget);
+      expect(find.text('Unitree G1 built-in speaker'), findsOneWidget);
+      expect(find.textContaining('(simulated)'), findsNothing);
+      final status = tester.widget<Text>(key('audio-input-status')).data!;
+      expect(status, contains('Saved on the robot'));
+      expect(status, contains('next starts'));
+      expect(status, isNot(contains('In use')));
       expect(
-        tester.getTopLeft(key('audio-devices-card')).dy,
-        greaterThan(tester.getBottomLeft(key('connection-two-columns')).dy),
-      );
-      expect(find.text('Audio devices'), findsOneWidget);
-      expect(find.text('Microphone (Input)'), findsOneWidget);
-      expect(find.text('Speaker (Output)'), findsOneWidget);
-      expect(find.text('Test microphone'), findsOneWidget);
-      expect(find.text('Test speaker'), findsOneWidget);
-      expect(find.text('Refresh devices'), findsOneWidget);
-      expect(key('audio-two-columns'), findsOneWidget);
-      expect(
-        find.text('Unitree G1 microphone array (simulated)'),
-        findsOneWidget,
-      );
-      expect(
-        find.text('Unitree G1 built-in speaker (simulated)'),
-        findsOneWidget,
+        tester.widget<ButtonStyleButton>(key('audio-input-test')).onPressed,
+        isNull,
+        reason: 'tests_enabled false',
       );
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('selecting a microphone in the UI leaves the speaker alone', (
+    testWidgets('live tests ask for confirmation; Cancel sends nothing', (
       tester,
     ) async {
-      final c = await mount(tester);
-      await tester.ensureVisible(key('audio-input-select'));
-      await tester.tap(key('audio-input-select'));
+      final (_, jetson) = await mount(tester, testsEnabled: true);
+      jetson.sent.clear();
+      await tester.ensureVisible(key('audio-output-test'));
+      await tester.tap(key('audio-output-test'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('USB microphone (simulated)').last);
+      expect(key('audio-test-confirm'), findsOneWidget);
+      expect(find.textContaining('current volume'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
-      final state = c.read(audioDevicesProvider);
-      expect(state.activeInputId, _usbMic);
-      expect(state.activeOutputId, _speaker);
-      expect(find.text('USB microphone (simulated)'), findsOneWidget);
+      expect(jetson.sent, isEmpty);
+
+      await tester.tap(key('audio-output-test'));
+      await tester.pumpAndSettle();
+      await tester.tap(key('audio-test-confirm-start'));
+      await tester.pumpAndSettle();
+      expect(jetson.sentTypes, ['audio_test_output']);
+      expect(jetson.sent.single['confirm'], isTrue);
+    });
+
+    testWidgets('robot busy lock disables controls with a notice', (
+      tester,
+    ) async {
+      final (_, jetson) = await mount(tester, testsEnabled: true);
+      jetson.sessionOwner = 'realtime_voice';
+      jetson.push(jetson.statusBody('audio_device_status'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.textContaining('in use by realtime_voice'), findsOneWidget);
       expect(
-        find.text('Unitree G1 built-in speaker (simulated)'),
-        findsOneWidget,
+        tester.widget<ButtonStyleButton>(key('audio-input-test')).onPressed,
+        isNull,
       );
     });
 
-    testWidgets('test button runs only on click and can be cancelled', (
-      tester,
-    ) async {
-      final c = await mount(tester);
-      expect(c.read(audioDevicesProvider).outputTest, AudioTestState.idle);
-      await tester.ensureVisible(key('audio-output-test'));
-      await tester.tap(key('audio-output-test'));
-      await tester.pump();
-      expect(find.text('Cancel test'), findsOneWidget);
-      await tester.tap(key('audio-output-test'));
-      await tester.pump();
-      expect(find.text('Test speaker'), findsOneWidget);
-      expect(c.read(audioDevicesProvider).outputTest, AudioTestState.cancelled);
+    testWidgets('stacks without overflow at phone width', (tester) async {
+      await mount(tester, size: const Size(390, 2400));
+      expect(key('audio-two-columns'), findsNothing);
+      expect(tester.takeException(), isNull);
     });
+  });
 
-    testWidgets('live mode shows an unavailable state with controls disabled', (
-      tester,
-    ) async {
-      await mount(tester, demo: false);
-      expect(key('audio-notice'), findsOneWidget);
-      expect(find.textContaining('not available on the robot'), findsWidgets);
-      expect(find.text('Unavailable'), findsNWidgets(2));
-      for (final button in [
-        'audio-input-test',
-        'audio-output-test',
-        'audio-refresh',
-      ]) {
-        final widget = tester.widget<ButtonStyleButton>(key(button));
-        expect(widget.onPressed, isNull, reason: button);
-      }
-    });
-
-    for (final size in const [
-      Size(320, 900),
-      Size(390, 844),
-      Size(700, 1100),
-    ]) {
-      testWidgets('stacks without overflow at ${size.width.toInt()} px', (
-        tester,
-      ) async {
-        await mount(tester, size: size);
-        expect(key('audio-devices-card'), findsOneWidget);
-        expect(key('audio-two-columns'), findsNothing);
-        final mic = tester.getTopLeft(find.text('Microphone (Input)'));
-        final speaker = tester.getTopLeft(find.text('Speaker (Output)'));
-        expect(speaker.dy, greaterThan(mic.dy));
-        expect(tester.takeException(), isNull);
-      });
-    }
+  testWidgets('Demo Mode card keeps simulated devices and behaviour', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final c = ProviderContainer(
+      overrides: [
+        robotTokenStoreProvider.overrideWithValue(MemoryTokenStore()),
+        dashboardControllerProvider.overrideWith(
+          () => RecordingDashboardController([]),
+        ),
+      ],
+    );
+    addTearDown(c.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: c,
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: const Scaffold(
+            body: SingleChildScrollView(child: RobotConnectionPanel()),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Unitree G1 microphone array (simulated)'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Demo Mode · simulated devices'),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(find.byKey(const Key('audio-input-test')));
+    await tester.tap(find.byKey(const Key('audio-input-test')));
+    await tester.pump();
+    expect(find.byKey(const Key('audio-test-confirm')), findsNothing);
+    expect(find.text('Cancel test'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('audio-input-test')));
+    await tester.pump();
+    expect(c.read(audioDevicesProvider).inputTest, AudioTestState.cancelled);
   });
 }

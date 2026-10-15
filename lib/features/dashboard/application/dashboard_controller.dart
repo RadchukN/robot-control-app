@@ -21,6 +21,7 @@ class DashboardController extends AsyncNotifier<DashboardData>
   bool _authenticated = false;
   bool _disposed = false;
   final _motionCommands = MotionCommandSession();
+  final _audioFrames = StreamController<Map<String, dynamic>>.broadcast();
   final _telemetryHistory = <DashboardTelemetry>[];
   final _historySampleClock = Stopwatch();
   Completer<List<String>>? _catalogRequest;
@@ -149,6 +150,22 @@ class DashboardController extends AsyncNotifier<DashboardData>
         StateError('WebSocket disconnected. Catalog unavailable.'),
       );
     }
+  }
+
+  /// Incoming `medza.audio` frames from the robot socket.
+  Stream<Map<String, dynamic>> get audioFrames => _audioFrames.stream;
+
+  /// Sends one `audio_*` frame on the existing authenticated socket.
+  void sendAudioFrame(Map<String, Object?> frame) {
+    final type = frame['type'];
+    if (type is! String || !type.startsWith('audio_')) {
+      throw ArgumentError.value(type, 'type', 'Only audio_* frames');
+    }
+    final channel = _telemetryChannel;
+    if (_disposed || !_authenticated || channel == null) {
+      throw StateError('Robot is not connected.');
+    }
+    channel.sink.add(jsonEncode(frame));
   }
 
   Future<Map<String, dynamic>> sendRecordedMotion(
@@ -351,6 +368,12 @@ class DashboardController extends AsyncNotifier<DashboardData>
       if (decoded is! Map<String, dynamic>) {
         return;
       }
+      // medza.audio frames are additive: never motion results or telemetry.
+      final type = decoded['type'];
+      if (type is String && type.startsWith('audio_')) {
+        if (!_audioFrames.isClosed) _audioFrames.add(decoded);
+        return;
+      }
       if (decoded['type'] == 'motion_catalog') {
         _handleMotionCatalog(decoded);
         return;
@@ -490,6 +513,7 @@ class DashboardController extends AsyncNotifier<DashboardData>
   }
 
   void _dispose() {
+    _audioFrames.close();
     _connectionGeneration++;
     WidgetsBinding.instance.removeObserver(this);
     _freshnessTimer?.cancel();
