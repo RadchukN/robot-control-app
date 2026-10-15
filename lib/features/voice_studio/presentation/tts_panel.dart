@@ -39,7 +39,17 @@ class _TtsPanelState extends ConsumerState<_TtsPanel> {
 
   void _savePhrase() {
     final error = ref.read(savedPhrasesProvider.notifier).add(_editor.text);
-    _snack(context, error ?? 'Phrase saved locally');
+    if (error == null) {
+      _notify(context).success(
+        'Phrase saved',
+        description: 'Saved locally on this device.',
+        key: 'saved-phrase',
+      );
+    } else {
+      _notify(
+        context,
+      ).warning('Phrase not saved', description: error, key: 'saved-phrase');
+    }
   }
 
   @override
@@ -489,6 +499,11 @@ class _PhraseChip extends ConsumerWidget {
                   _editPhrase(context, ref, phrase);
                 } else {
                   ref.read(savedPhrasesProvider.notifier).remove(phrase.id);
+                  _notify(context).info(
+                    'Phrase deleted',
+                    description: phrase.text,
+                    key: 'saved-phrase',
+                  );
                 }
               },
               itemBuilder: (context) => const [
@@ -538,5 +553,15 @@ Future<void> _editPhrase(
   final error = phrase == null
       ? phrases.add(result)
       : phrases.edit(phrase.id, result);
-  if (error != null && context.mounted) _snack(context, error);
+  if (!context.mounted) return;
+  if (error != null) {
+    _notify(
+      context,
+    ).warning('Phrase not saved', description: error, key: 'saved-phrase');
+  } else {
+    _notify(context).success(
+      phrase == null ? 'Phrase added' : 'Phrase updated',
+      key: 'saved-phrase',
+    );
+  }
 }

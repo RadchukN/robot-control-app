@@ -56,7 +56,10 @@ class _TranscriptPanelState extends ConsumerState<_TranscriptPanel> {
                           ClipboardData(text: state.transcriptText),
                         );
                         if (context.mounted) {
-                          _snack(context, 'Transcript copied');
+                          _notify(context).success(
+                            'Transcript copied',
+                            description: 'Copied to the clipboard.',
+                          );
                         }
                       },
                 icon: const Icon(Icons.copy_rounded, size: 18, color: _body),

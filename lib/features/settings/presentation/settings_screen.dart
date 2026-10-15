@@ -11,6 +11,7 @@ import 'package:robot_control_app/features/settings/application/settings_state.d
 import 'package:robot_control_app/features/dashboard/application/dashboard_controller.dart';
 import 'package:robot_control_app/services/robot_connection.dart';
 import 'package:robot_control_app/services/robot_authentication.dart';
+import 'package:robot_control_app/shared/notifications/app_notification_service.dart';
 
 part 'connectivity_panel.dart';
 part 'robot_connection_panel.dart';
@@ -34,6 +35,10 @@ class SettingsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.listen(settingsProvider.select((s) => s.syncStatus), (previous, next) {
+      if (previous == null || previous == next) return;
+      _notifySyncStatus(ref.read(appNotificationsProvider.notifier), next);
+    });
     final state = ref.watch(settingsProvider);
     final controller = ref.read(settingsProvider.notifier);
     final connectivityState = ref.watch(connectivityProvider);
@@ -1820,4 +1825,51 @@ TextStyle _text(
     fontWeight: weight,
     color: color,
   );
+}
+
+/// Mirrors the inline sync status as a transient notification.
+void _notifySyncStatus(
+  AppNotificationService notifications,
+  SettingsSyncStatus status,
+) {
+  const key = 'settings-sync';
+  switch (status) {
+    case SettingsSyncStatus.saved:
+      notifications.success(
+        'Settings saved',
+        description: 'Changes are synchronized.',
+        key: key,
+      );
+    case SettingsSyncStatus.unsaved:
+      notifications.unsaved(
+        'Unsaved changes',
+        description: 'Review or discard your edits.',
+        key: key,
+      );
+    case SettingsSyncStatus.restartRequired:
+      notifications.info(
+        'Restart required',
+        description: 'Apply after a safe restart.',
+        key: key,
+      );
+    case SettingsSyncStatus.warning:
+      notifications.warning(
+        'Setting reduces protection',
+        description: 'Review safety settings before robot motion.',
+        key: key,
+      );
+    case SettingsSyncStatus.danger:
+      notifications.error(
+        'Elevated authority required',
+        description: status.description,
+        key: key,
+      );
+    case SettingsSyncStatus.offline:
+    case SettingsSyncStatus.noRobot:
+      notifications.info(
+        status.label,
+        description: status.description,
+        key: key,
+      );
+  }
 }

@@ -3,18 +3,10 @@ import 'package:go_router/go_router.dart';
 import 'package:robot_control_app/core/routing/app_routes.dart';
 import 'package:robot_control_app/core/theme/app_colors.dart';
 import 'package:robot_control_app/models/dashboard_data.dart';
+import 'package:robot_control_app/shared/notifications/app_notification_service.dart';
 
-void _showDashboardMessage(BuildContext context, String message) {
-  ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-      ),
-    );
-}
+void _showDashboardMessage(BuildContext context, String message) =>
+    context.notifications.info(message);
 
 class DashboardView extends StatelessWidget {
   const DashboardView({required this.data, required this.onRefresh, super.key});
@@ -1182,11 +1174,11 @@ class _QuickActions extends StatelessWidget {
 
   final _DashboardLayout layout;
 
-  void _unavailable(BuildContext context, String name) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$name is not available in this build.')),
-    );
-  }
+  void _unavailable(BuildContext context, String name) =>
+      context.notifications.info(
+        'Not available yet',
+        description: '$name is not available in this build.',
+      );
 
   @override
   Widget build(BuildContext context) {

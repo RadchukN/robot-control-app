@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:robot_control_app/core/theme/app_spacing.dart';
 import 'package:robot_control_app/features/motion/application/motion_state.dart';
+import 'package:robot_control_app/features/motion/presentation/motion_notifications.dart';
+import 'package:robot_control_app/shared/notifications/app_notification.dart';
+import 'package:robot_control_app/shared/notifications/app_notification_service.dart';
 
 part 'motion_widgets.dart';
 
@@ -29,7 +32,12 @@ class MotionScreen extends ConsumerWidget {
       _,
       next,
     ) {
-      if (next != null) _showMotionMessage(context, next);
+      if (next != null) {
+        notifyMotionCommand(
+          ref.read(appNotificationsProvider.notifier),
+          ref.read(motionProvider),
+        );
+      }
     });
     final state = ref.watch(motionProvider);
     final controller = ref.read(motionProvider.notifier);

@@ -351,13 +351,4 @@ class _ToneDot extends StatelessWidget {
   );
 }
 
-void _snack(BuildContext context, String message) =>
-    ScaffoldMessenger.maybeOf(context)
-      ?..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
-        ),
-      );
+AppNotificationService _notify(BuildContext context) => context.notifications;

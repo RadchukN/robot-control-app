@@ -126,12 +126,33 @@ class _RobotConnectionPanelState extends ConsumerState<RobotConnectionPanel> {
             ? null
             : 'Token saved securely for this endpoint.';
       });
+      if (remove || hasDraftToken) {
+        context.notifications.success(
+          remove ? 'Token removed' : 'Token saved',
+          description: remove
+              ? 'The saved token for this endpoint was removed.'
+              : 'Stored securely for this robot endpoint.',
+          key: 'robot-credentials',
+        );
+      }
     } on RobotCredentialException catch (error) {
-      if (mounted) setState(() => _credentialMessage = error.toString());
+      if (mounted) {
+        setState(() => _credentialMessage = error.toString());
+        context.notifications.error(
+          'Credentials not updated',
+          description: error.toString(),
+          key: 'robot-credentials',
+        );
+      }
     } on Object {
       if (mounted) {
         setState(
           () => _credentialMessage = 'Could not update connection credentials.',
+        );
+        context.notifications.error(
+          'Credentials not updated',
+          description: 'Could not update connection credentials.',
+          key: 'robot-credentials',
         );
       }
     } finally {

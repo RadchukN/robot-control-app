@@ -1007,6 +1007,9 @@ class _RecordMotionState extends State<_RecordMotion> {
                       saved
                           ? 'Motion saved locally'
                           : 'Complete a recording first',
+                      type: saved
+                          ? AppNotificationType.success
+                          : AppNotificationType.warning,
                     );
                   }
                 : null,
@@ -2051,24 +2054,26 @@ Future<void> _runMotionAction(
   try {
     final result = await action;
     if (!context.mounted) return;
-    _showMotionMessage(context, result ? success : unavailable);
+    _showMotionMessage(
+      context,
+      result ? success : unavailable,
+      type: result ? AppNotificationType.success : AppNotificationType.info,
+    );
   } on Object {
     if (!context.mounted) return;
-    _showMotionMessage(context, 'Motion action failed');
+    _showMotionMessage(
+      context,
+      'Motion action failed',
+      type: AppNotificationType.error,
+    );
   }
 }
 
-void _showMotionMessage(BuildContext context, String message) {
-  ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-      ),
-    );
-}
+void _showMotionMessage(
+  BuildContext context,
+  String message, {
+  AppNotificationType type = AppNotificationType.info,
+}) => context.notifications.show(type, message);
 
 Future<void> _showRenameDialog(
   BuildContext context,

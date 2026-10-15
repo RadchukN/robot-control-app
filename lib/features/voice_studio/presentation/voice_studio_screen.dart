@@ -7,12 +7,14 @@ import 'package:go_router/go_router.dart';
 import 'package:robot_control_app/core/routing/app_routes.dart';
 import 'package:robot_control_app/core/theme/app_spacing.dart';
 import 'package:robot_control_app/features/motion/application/motion_state.dart';
+import 'package:robot_control_app/features/motion/presentation/motion_notifications.dart';
 import 'package:robot_control_app/features/voice_studio/application/realtime_voice_controller.dart';
 import 'package:robot_control_app/features/voice_studio/application/tts_controller.dart';
 import 'package:robot_control_app/features/voice_studio/application/voice_studio_providers.dart';
 import 'package:robot_control_app/features/voice_studio/domain/transcript_buffer.dart';
 import 'package:robot_control_app/features/voice_studio/domain/voice_models.dart';
 import 'package:robot_control_app/services/robot_connection.dart';
+import 'package:robot_control_app/shared/notifications/app_notification_service.dart';
 
 part 'voice_studio_style.dart';
 part 'realtime_panel.dart';
@@ -28,7 +30,117 @@ class VoiceStudioScreen extends ConsumerWidget {
   static const mediumBreakpoint = 720.0;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => DecoratedBox(
+  Widget build(BuildContext context, WidgetRef ref) {
+    _listenForNotifications(ref);
+    return _buildPage();
+  }
+
+  void _listenForNotifications(WidgetRef ref) {
+    AppNotificationService notifications() =>
+        ref.read(appNotificationsProvider.notifier);
+    ref
+      ..listen(realtimeVoiceProvider.select((s) => s.session), (
+        previous,
+        next,
+      ) {
+        final simulated = ref.read(realtimeVoiceProvider).simulated;
+        const key = 'voice-session';
+        switch (next) {
+          case VoiceSessionState.starting:
+            notifications().progress('Starting AI conversation…', key: key);
+          case VoiceSessionState.listening
+              when previous == VoiceSessionState.starting:
+            notifications().success(
+              simulated
+                  ? 'Demo conversation started'
+                  : 'AI conversation started',
+              description: simulated
+                  ? 'Simulation only — no real robot audio output.'
+                  : 'G1 is listening.',
+              key: key,
+            );
+          case VoiceSessionState.idle
+              when previous == VoiceSessionState.stopping:
+            notifications().info('AI conversation ended', key: key);
+          case VoiceSessionState.error:
+            notifications().error(
+              'AI conversation error',
+              description: ref.read(realtimeVoiceProvider).lastError,
+              key: key,
+            );
+          case VoiceSessionState.busy:
+            notifications().warning(
+              'Speaker busy',
+              description: ref.read(realtimeVoiceProvider).lastError,
+              key: key,
+            );
+          case VoiceSessionState.disconnected when previous != null:
+            notifications().warning(
+              'Voice disconnected',
+              description:
+                  'The robot link dropped. Start again when it returns.',
+              key: key,
+            );
+          default:
+            break;
+        }
+      })
+      ..listen(ttsProvider, (previous, next) {
+        const key = 'tts';
+        if (next.phase != previous?.phase) {
+          if (next.phase == TtsPhase.speaking) {
+            notifications().progress(
+              next.simulated ? 'Simulating speech…' : 'Speaking on G1…',
+              description: next.simulated
+                  ? 'Demo Mode — the robot is not speaking.'
+                  : null,
+              key: key,
+            );
+          }
+        }
+        final result = next.lastResult;
+        if (result != null && result != previous?.lastResult) {
+          if (next.simulated) {
+            notifications().info(
+              'Speech simulation',
+              description: result,
+              key: key,
+            );
+          } else {
+            notifications().success(
+              'Speech finished',
+              description: result,
+              key: key,
+            );
+          }
+        }
+        final error = next.lastError;
+        if (error != null && error != previous?.lastError) {
+          notifications().warning(
+            'Speech not played',
+            description: error,
+            key: key,
+          );
+        }
+      })
+      ..listen(voiceDemoModeProvider, (previous, demo) {
+        if (previous == null) return;
+        notifications().info(
+          demo ? 'Demo Mode on' : 'Demo Mode off',
+          description: demo
+              ? 'Voice and TTS are simulated. Nothing is sent to the robot.'
+              : 'The robot voice backend is not available yet.',
+          key: 'voice-mode',
+        );
+      })
+      ..listen(motionProvider.select((s) => s.commandMessage), (_, next) {
+        if (next != null) {
+          notifyMotionCommand(notifications(), ref.read(motionProvider));
+        }
+      });
+  }
+
+  Widget _buildPage() => DecoratedBox(
     key: const Key('voice-studio-screen'),
     decoration: const BoxDecoration(
       gradient: LinearGradient(
