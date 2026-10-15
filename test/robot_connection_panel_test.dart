@@ -168,6 +168,8 @@ void main() {
     expect(container.read(selectedRobotEndpointProvider).uri, endpoint.uri);
     await tester.enterText(field('robot-ip-field'), '10.20.30.99');
     await tester.enterText(field('robot-port-field'), '8765');
+    // The page now scrolls (Audio devices card); let the focus scroll settle.
+    await tester.pumpAndSettle();
     await tester.tap(field('robot-connect-button'));
     await tester.pump();
     expect(

@@ -64,6 +64,8 @@ class SettingsState {
     this.commandConfirmation = true,
     this.controlOwnership = 'Exclusive',
     this.syncStatus = SettingsSyncStatus.saved,
+    this.audioInputDeviceId,
+    this.audioOutputDeviceId,
   });
 
   final SettingsCategory category;
@@ -84,6 +86,11 @@ class SettingsState {
   final String controlOwnership;
   final SettingsSyncStatus syncStatus;
 
+  /// Desired robot audio devices as stable backend ids. Null means the
+  /// robot's own configuration. What is active is reported by the backend.
+  final String? audioInputDeviceId;
+  final String? audioOutputDeviceId;
+
   SettingsState copyWith({
     SettingsCategory? category,
     String? searchQuery,
@@ -94,6 +101,8 @@ class SettingsState {
     bool? humanProximityStop,
     bool? commandConfirmation,
     SettingsSyncStatus? syncStatus,
+    Object? audioInputDeviceId = _unsetDevice,
+    Object? audioOutputDeviceId = _unsetDevice,
   }) {
     return SettingsState(
       category: category ?? this.category,
@@ -113,9 +122,17 @@ class SettingsState {
       commandConfirmation: commandConfirmation ?? this.commandConfirmation,
       controlOwnership: controlOwnership,
       syncStatus: syncStatus ?? this.syncStatus,
+      audioInputDeviceId: identical(audioInputDeviceId, _unsetDevice)
+          ? this.audioInputDeviceId
+          : audioInputDeviceId as String?,
+      audioOutputDeviceId: identical(audioOutputDeviceId, _unsetDevice)
+          ? this.audioOutputDeviceId
+          : audioOutputDeviceId as String?,
     );
   }
 }
+
+const _unsetDevice = Object();
 
 /// Integration boundary for durable settings. It remains unbound until the API
 /// exposes a settings contract; the current screen edits only a local draft.
@@ -142,6 +159,12 @@ class SettingsController extends Notifier<SettingsState> {
   void setSearchQuery(String query) {
     state = state.copyWith(searchQuery: query);
   }
+
+  void setAudioInputDevice(String? deviceId) =>
+      state = state.copyWith(audioInputDeviceId: deviceId);
+
+  void setAudioOutputDevice(String? deviceId) =>
+      state = state.copyWith(audioOutputDeviceId: deviceId);
 
   void toggleRestoreLastRobot() {
     state = state.copyWith(

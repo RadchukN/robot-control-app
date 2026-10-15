@@ -6,13 +6,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:robot_control_app/core/theme/app_spacing.dart';
 import 'package:robot_control_app/core/theme/app_colors.dart';
 import 'package:robot_control_app/core/theme/theme_provider.dart';
+import 'package:robot_control_app/features/settings/application/audio_devices_controller.dart';
 import 'package:robot_control_app/features/settings/application/connectivity_state.dart';
 import 'package:robot_control_app/features/settings/application/settings_state.dart';
+import 'package:robot_control_app/features/settings/data/audio_device_backend.dart';
 import 'package:robot_control_app/features/dashboard/application/dashboard_controller.dart';
 import 'package:robot_control_app/services/robot_connection.dart';
 import 'package:robot_control_app/services/robot_authentication.dart';
 import 'package:robot_control_app/shared/notifications/app_notification_service.dart';
 
+part 'audio_devices_card.dart';
 part 'connectivity_panel.dart';
 part 'robot_connection_panel.dart';
 

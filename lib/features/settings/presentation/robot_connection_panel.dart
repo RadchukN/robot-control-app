@@ -537,6 +537,8 @@ class _RobotConnectionPanelState extends ConsumerState<RobotConnectionPanel> {
                 );
               },
             ),
+            const SizedBox(height: AppSpacing.lg),
+            const _AudioDevicesCard(),
           ],
         ),
       ),
