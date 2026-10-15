@@ -343,4 +343,62 @@ void main() {
     );
     expect(server.messages, isEmpty);
   });
+
+  test('audio frames share the authenticated socket without touching '
+      'telemetry or motion', () async {
+    await start();
+    addTearDown(cleanup);
+    server.telemetry();
+    await waitUntil(
+      () =>
+          container.read(robotLinkProvider).status == RobotLinkStatus.connected,
+    );
+    final frames = <Map<String, dynamic>>[];
+    final audio = controller.audioFrames.listen(frames.add);
+    addTearDown(audio.cancel);
+
+    controller.sendAudioFrame({
+      'type': 'audio_get_capabilities',
+      'request_id': 'c1',
+    });
+    expect(
+      () =>
+          controller.sendAudioFrame({'type': 'motion', 'action': 'wave_hand'}),
+      throwsArgumentError,
+    );
+    await waitUntil(() => server.messages.isNotEmpty);
+    expect(server.messages, [
+      jsonEncode({'type': 'audio_get_capabilities', 'request_id': 'c1'}),
+    ]);
+
+    server.sockets.last
+      ..add(
+        jsonEncode({
+          'type': 'audio_capabilities',
+          'request_id': 'c1',
+          'protocol': 'medza.audio',
+          'protocol_version': 1,
+        }),
+      )
+      ..add(
+        jsonEncode({
+          'type': 'audio_result',
+          'action': 'set_settings',
+          'status': 'busy',
+          'error': 'audio_session_active',
+        }),
+      );
+    await waitUntil(() => frames.length == 2);
+    expect(frames.map((f) => f['type']), [
+      'audio_capabilities',
+      'audio_result',
+    ]);
+    expect(container.read(robotLinkProvider).status, RobotLinkStatus.connected);
+
+    controller.disconnectRobot();
+    expect(
+      () => controller.sendAudioFrame({'type': 'audio_get_devices'}),
+      throwsStateError,
+    );
+  });
 }
