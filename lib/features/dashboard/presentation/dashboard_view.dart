@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:robot_control_app/core/routing/app_routes.dart';
 import 'package:robot_control_app/core/theme/app_colors.dart';
 import 'package:robot_control_app/models/dashboard_data.dart';
+import 'package:robot_control_app/shared/layout/app_layout.dart';
 import 'package:robot_control_app/shared/notifications/app_notification_service.dart';
 
 void _showDashboardMessage(BuildContext context, String message) =>
@@ -17,22 +18,36 @@ class DashboardView extends StatelessWidget {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      final layout = switch (constraints.maxWidth) {
-        < 600 => _DashboardLayout.compact,
-        < 1100 => _DashboardLayout.medium,
-        _ => _DashboardLayout.expanded,
-      };
-      final horizontalPadding = switch (layout) {
-        _DashboardLayout.compact => constraints.maxWidth >= 390 ? 32.0 : 16.0,
-        _DashboardLayout.medium => 44.0,
-        _DashboardLayout.expanded => 28.0,
-      };
-      final topPadding = switch (layout) {
-        _DashboardLayout.compact => 16.0,
-        _DashboardLayout.medium => 20.0,
-        _DashboardLayout.expanded => 24.0,
-      };
-      final gap = layout == _DashboardLayout.expanded ? 14.0 : 16.0;
+      // Phones on their side reuse the medium cards with a slim header and
+      // tighter gutters, so the overview starts in the first screenful.
+      final landscape = AppLayout.landscapeOf(context);
+      final layout = landscape
+          ? _DashboardLayout.medium
+          : switch (constraints.maxWidth) {
+              < 600 => _DashboardLayout.compact,
+              < 1100 => _DashboardLayout.medium,
+              _ => _DashboardLayout.expanded,
+            };
+      final horizontalPadding = landscape
+          ? 16.0
+          : switch (layout) {
+              _DashboardLayout.compact =>
+                constraints.maxWidth >= 390 ? 32.0 : 16.0,
+              _DashboardLayout.medium => 44.0,
+              _DashboardLayout.expanded => 28.0,
+            };
+      final topPadding = landscape
+          ? 12.0
+          : switch (layout) {
+              _DashboardLayout.compact => 16.0,
+              _DashboardLayout.medium => 20.0,
+              _DashboardLayout.expanded => 24.0,
+            };
+      final gap = landscape
+          ? 12.0
+          : layout == _DashboardLayout.expanded
+          ? 14.0
+          : 16.0;
 
       return RefreshIndicator(
         onRefresh: onRefresh,
@@ -46,9 +61,12 @@ class DashboardView extends StatelessWidget {
             layout == _DashboardLayout.expanded ? 2 : 16,
           ),
           children: [
-            _DashboardHeader(data: data, layout: layout),
+            if (landscape)
+              _LandscapeDashboardHeader(data: data)
+            else
+              _DashboardHeader(data: data, layout: layout),
             SizedBox(height: gap),
-            _RobotOverview(data: data, layout: layout),
+            _RobotOverview(data: data, layout: layout, landscape: landscape),
             SizedBox(height: gap),
             _PrimaryMetrics(data: data, layout: layout),
             SizedBox(height: gap),
@@ -100,16 +118,39 @@ class _DashboardHeader extends StatelessWidget {
   }
 }
 
+/// One row: title on the left, telemetry state on the right.
+class _LandscapeDashboardHeader extends StatelessWidget {
+  const _LandscapeDashboardHeader({required this.data});
+
+  final DashboardData data;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Expanded(
+        child: _DashboardTitle(updatedAt: data.updatedAt, shrinkWrap: true),
+      ),
+      const SizedBox(width: 12),
+      const SizedBox(
+        height: 40,
+        child: _HeaderReadyState(padding: EdgeInsets.symmetric(horizontal: 14)),
+      ),
+    ],
+  );
+}
+
 class _DashboardTitle extends StatelessWidget {
-  const _DashboardTitle({required this.updatedAt});
+  const _DashboardTitle({required this.updatedAt, this.shrinkWrap = false});
 
   final DateTime updatedAt;
+  final bool shrinkWrap;
 
   @override
   Widget build(BuildContext context) {
     final seconds = DateTime.now().difference(updatedAt).inSeconds;
     final freshness = seconds < 2 ? 'just now' : '$seconds seconds ago';
     return Column(
+      mainAxisSize: shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -135,10 +176,13 @@ class _DashboardTitle extends StatelessWidget {
 }
 
 class _HeaderReadyState extends StatelessWidget {
-  const _HeaderReadyState();
+  const _HeaderReadyState({this.padding = EdgeInsets.zero});
+
+  final EdgeInsets padding;
 
   @override
   Widget build(BuildContext context) => Container(
+    padding: padding,
     decoration: BoxDecoration(
       color: const Color(0xD9DDF8E8),
       border: Border.all(color: const Color(0x382DB46E)),
@@ -172,10 +216,15 @@ class _HeaderReadyState extends StatelessWidget {
 }
 
 class _RobotOverview extends StatelessWidget {
-  const _RobotOverview({required this.data, required this.layout});
+  const _RobotOverview({
+    required this.data,
+    required this.layout,
+    this.landscape = false,
+  });
 
   final DashboardData data;
   final _DashboardLayout layout;
+  final bool landscape;
 
   @override
   Widget build(BuildContext context) {
@@ -190,9 +239,13 @@ class _RobotOverview extends StatelessWidget {
       _ => '--',
     };
     const nominal = false;
+    // On phones the card grows with the text size instead of clipping it.
+    final textGrowth = landscape
+        ? MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.5)
+        : 1.0;
     final height = switch (layout) {
       _DashboardLayout.compact => 292.0,
-      _DashboardLayout.medium => 180.0,
+      _DashboardLayout.medium => 180.0 * textGrowth,
       _DashboardLayout.expanded => 136.0,
     };
 
@@ -275,6 +328,7 @@ class _RobotOverview extends StatelessWidget {
                             nominal: nominal,
                             batteryValue: batteryValue,
                             signalLabel: signalLabel,
+                            identityHeight: 52 * textGrowth,
                           ),
                   ),
                 ],
@@ -456,18 +510,20 @@ class _MediumOverviewBody extends StatelessWidget {
     required this.nominal,
     required this.batteryValue,
     required this.signalLabel,
+    this.identityHeight = 52,
   });
 
   final bool connected;
   final bool nominal;
   final String batteryValue;
   final String signalLabel;
+  final double identityHeight;
 
   @override
   Widget build(BuildContext context) => Column(
     children: [
       SizedBox(
-        height: 52,
+        height: identityHeight,
         child: Row(
           children: [
             const Expanded(flex: 160, child: _RobotIdentity()),

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:robot_control_app/core/theme/app_spacing.dart';
 import 'package:robot_control_app/features/motion/application/motion_state.dart';
 import 'package:robot_control_app/features/motion/presentation/motion_notifications.dart';
+import 'package:robot_control_app/shared/layout/app_layout.dart';
 import 'package:robot_control_app/shared/notifications/app_notification.dart';
 import 'package:robot_control_app/shared/notifications/app_notification_service.dart';
 
@@ -51,19 +52,25 @@ class MotionScreen extends ConsumerWidget {
         ),
       ),
       child: LayoutBuilder(
-        builder: (context, constraints) => SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(
-            constraints.maxWidth < 600 ? 12 : 16,
-            constraints.maxWidth < 600 ? 14 : 18,
-            constraints.maxWidth < 600 ? 12 : 16,
-            AppSpacing.lg,
-          ),
-          child: _MotionPage(
-            state: state,
-            controller: controller,
-            width: constraints.maxWidth,
-          ),
-        ),
+        builder: (context, constraints) => AppLayout.landscapeOf(context)
+            ? _LandscapeMotionLayout(
+                state: state,
+                controller: controller,
+                width: constraints.maxWidth,
+              )
+            : SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(
+                  constraints.maxWidth < 600 ? 12 : 16,
+                  constraints.maxWidth < 600 ? 14 : 18,
+                  constraints.maxWidth < 600 ? 12 : 16,
+                  AppSpacing.lg,
+                ),
+                child: _MotionPage(
+                  state: state,
+                  controller: controller,
+                  width: constraints.maxWidth,
+                ),
+              ),
       ),
     );
   }

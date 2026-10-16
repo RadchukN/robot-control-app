@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:robot_control_app/core/theme/app_spacing.dart';
+import 'package:robot_control_app/shared/layout/app_layout.dart';
 import 'package:robot_control_app/features/vision/application/vision_state.dart';
 
 const _ink = Color(0xFF252A42);
@@ -43,6 +44,16 @@ class VisionScreen extends ConsumerWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
+          if (AppLayout.landscapeOf(context)) {
+            return _LandscapeVisionWorkspace(
+              state: state,
+              capabilities: capabilities,
+              onModeSelected: controller.selectMode,
+              onDetectionSelected: controller.selectDetection,
+              onReconnect: controller.reconnect,
+              onRetry: controller.retry,
+            );
+          }
           final layout = switch (constraints.maxWidth) {
             < 600 => _VisionLayout.compact,
             < 840 => _VisionLayout.medium,
@@ -73,6 +84,82 @@ class VisionScreen extends ConsumerWidget {
 }
 
 enum _VisionLayout { compact, medium, expanded, wide }
+
+/// Phones on their side: the camera takes the full height; the header,
+/// modes and scene details scroll in a side panel.
+class _LandscapeVisionWorkspace extends StatelessWidget {
+  const _LandscapeVisionWorkspace({
+    required this.state,
+    required this.capabilities,
+    required this.onModeSelected,
+    required this.onDetectionSelected,
+    required this.onReconnect,
+    required this.onRetry,
+  });
+
+  final VisionState state;
+  final Set<VisionMode> capabilities;
+  final bool Function(VisionMode mode) onModeSelected;
+  final ValueChanged<VisionDetection?> onDetectionSelected;
+  final VoidCallback onReconnect;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      const padding = 10.0;
+      final sideWidth = constraints.maxWidth >= 700 ? 240.0 : 200.0;
+      final cameraWidth = constraints.maxWidth - sideWidth - padding * 3;
+      return Padding(
+        padding: const EdgeInsets.all(padding),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: _CameraViewport(
+                state: state,
+                height: constraints.maxHeight - padding * 2,
+                compactControls: cameraWidth < 480,
+                onDetectionSelected: onDetectionSelected,
+                onReconnect: onReconnect,
+                onRetry: onRetry,
+              ),
+            ),
+            const SizedBox(width: padding),
+            SizedBox(
+              width: sideWidth,
+              child: SingleChildScrollView(
+                key: const Key('vision-landscape-side'),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _VisionHeader(state: state, compact: true, fitText: true),
+                    const SizedBox(height: 10),
+                    _CameraModeSelector(
+                      activeMode: state.activeMode,
+                      capabilities: capabilities,
+                      compact: false,
+                      onSelected: onModeSelected,
+                    ),
+                    const SizedBox(height: 10),
+                    _SceneInsight(state: state, compact: true),
+                    const SizedBox(height: 10),
+                    const _VisionTimeline(compact: true),
+                    const SizedBox(height: 10),
+                    _SelectionSummary(
+                      detection: state.selectedObject,
+                      compact: true,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
 
 class _VisionWorkspace extends StatelessWidget {
   const _VisionWorkspace({
@@ -143,16 +230,23 @@ class _VisionWorkspace extends StatelessWidget {
 }
 
 class _VisionHeader extends StatelessWidget {
-  const _VisionHeader({required this.state, required this.compact});
+  const _VisionHeader({
+    required this.state,
+    required this.compact,
+    this.fitText = false,
+  });
 
   final VisionState state;
   final bool compact;
+
+  /// Lets the header grow with the text size instead of a fixed height.
+  final bool fitText;
 
   @override
   Widget build(BuildContext context) {
     final badge = _headerBadge(state);
     return SizedBox(
-      height: compact ? 45 : 51,
+      height: fitText ? null : (compact ? 45 : 51),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

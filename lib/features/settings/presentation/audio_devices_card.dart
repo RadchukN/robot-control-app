@@ -456,6 +456,9 @@ Future<bool> _confirmAudioTest(
       context: context,
       builder: (context) => AlertDialog(
         key: const Key('audio-test-confirm'),
+        // Scrolls instead of clipping on short screens such as phones
+        // held sideways.
+        scrollable: true,
         title: Text(input ? 'Test microphone?' : 'Test speaker?'),
         content: Text(
           input
