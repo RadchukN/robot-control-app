@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:robot_control_app/shared/notifications/app_notification.dart';
 import 'package:robot_control_app/shared/notifications/app_notification_card.dart';
 import 'package:robot_control_app/shared/notifications/app_notification_service.dart';
+import 'package:robot_control_app/shared/layout/app_layout.dart';
 
 /// Where notifications float. Defaults keep cards below the app header.
 @immutable
@@ -11,6 +12,7 @@ class AppNotificationPlacement {
   const AppNotificationPlacement({
     this.desktopMargin = const EdgeInsets.fromLTRB(16, 100, 20, 16),
     this.compactMargin = const EdgeInsets.fromLTRB(12, 82, 12, 12),
+    this.landscapeMargin = const EdgeInsets.fromLTRB(84, 12, 16, 12),
     this.compactBreakpoint = 600,
     this.maxWidth = 400,
     this.spacing = 10,
@@ -18,6 +20,9 @@ class AppNotificationPlacement {
 
   final EdgeInsets desktopMargin;
   final EdgeInsets compactMargin;
+
+  /// Phones on their side have no header; the left inset clears the rail.
+  final EdgeInsets landscapeMargin;
   final double compactBreakpoint;
   final double maxWidth;
   final double spacing;
@@ -183,8 +188,14 @@ class _NotificationLayerState extends ConsumerState<_NotificationLayer> {
     final service = _service;
     final media = MediaQuery.of(context);
     final placement = widget.placement;
-    final compact = media.size.width < placement.compactBreakpoint;
-    final margin = compact ? placement.compactMargin : placement.desktopMargin;
+    final landscape = AppLayout.isLandscapeCompact(media.size);
+    final compact =
+        !landscape && media.size.width < placement.compactBreakpoint;
+    final margin = landscape
+        ? placement.landscapeMargin
+        : compact
+        ? placement.compactMargin
+        : placement.desktopMargin;
     final items = [for (final n in visible) (n, false)];
     final exiting = _leaving.values.toList()
       ..sort((a, b) => a.$2.compareTo(b.$2));

@@ -1,7 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:robot_control_app/core/navigation/navigation_visibility.dart';
 import 'package:robot_control_app/core/routing/app_routes.dart';
 import 'package:robot_control_app/core/theme/app_colors.dart';
+import 'package:robot_control_app/features/motion/application/motion_state.dart';
+import 'package:robot_control_app/features/motion/presentation/motion_notifications.dart';
+import 'package:robot_control_app/services/robot_connection.dart';
+import 'package:robot_control_app/shared/layout/app_layout.dart';
+import 'package:robot_control_app/shared/notifications/app_notification_service.dart';
 
 Future<void> _openGlobalSearch(BuildContext context) async {
   final route = await showSearch<String>(
@@ -43,6 +50,12 @@ class AppNavigationShell extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final width = constraints.maxWidth;
+      if (AppLayout.isLandscapeCompact(constraints.biggest)) {
+        return _LandscapeShell(
+          navigationShell: navigationShell,
+          onSelect: _goBranch,
+        );
+      }
       if (width < _compactBreakpoint) {
         return Scaffold(
           backgroundColor: Colors.transparent,
@@ -104,6 +117,344 @@ class AppNavigationShell extends StatelessWidget {
 }
 
 enum _ShellLayout { compact, medium, expanded }
+
+/// Phones on their side: no header, a slim icon rail with every routed
+/// destination, the live robot link and a Stop that is always reachable.
+class _LandscapeShell extends StatelessWidget {
+  const _LandscapeShell({
+    required this.navigationShell,
+    required this.onSelect,
+  });
+
+  final StatefulNavigationShell navigationShell;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    key: const Key('landscape-shell'),
+    // Fills the system-bar strips around the safe content area in the
+    // pages' own lavender-white.
+    backgroundColor: const Color(0xFFF7F8FF),
+    body: Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _LandscapeRail(
+          currentIndex: navigationShell.currentIndex,
+          onSelect: onSelect,
+        ),
+        Expanded(
+          child: MediaQuery.removePadding(
+            context: context,
+            removeLeft: true,
+            child: SafeArea(
+              left: false,
+              child: Semantics(container: true, child: navigationShell),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+const _landscapeDestinations = <_DesktopDestination>[
+  _DesktopDestination(
+    'Dashboard',
+    Icons.dashboard_outlined,
+    NavFeature.dashboard,
+    0,
+  ),
+  _DesktopDestination(
+    'AI Workspace',
+    Icons.auto_awesome_outlined,
+    NavFeature.aiWorkspace,
+    5,
+  ),
+  _DesktopDestination('Motion', Icons.trending_up, NavFeature.motion, 1),
+  _DesktopDestination(
+    'AI Voice Studio',
+    Icons.record_voice_over_outlined,
+    NavFeature.voiceStudio,
+    6,
+  ),
+  _DesktopDestination(
+    'Vision',
+    Icons.visibility_outlined,
+    NavFeature.vision,
+    3,
+  ),
+  _DesktopDestination('Audio', Icons.graphic_eq_outlined, NavFeature.audio, 2),
+  _DesktopDestination(
+    'Settings',
+    Icons.settings_outlined,
+    NavFeature.settings,
+    4,
+  ),
+];
+
+class _LandscapeRail extends StatelessWidget {
+  const _LandscapeRail({required this.currentIndex, required this.onSelect});
+
+  final int currentIndex;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final padding = MediaQuery.paddingOf(context);
+    return Container(
+      key: const Key('landscape-rail'),
+      width: 72 + padding.left,
+      padding: EdgeInsets.only(
+        left: padding.left,
+        top: padding.top + 8,
+        bottom: padding.bottom + 8,
+      ),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFFDFBFF), Color(0xFFF6F5FF), Color(0xFFECF0FF)],
+          stops: [0, .58, 1],
+        ),
+        border: Border(right: BorderSide(color: Color(0x1F9485D1))),
+      ),
+      child: FocusTraversalGroup(
+        child: Column(
+          children: [
+            _RailRobotStatus(onTap: () => onSelect(4)),
+            const SizedBox(height: 6),
+            Expanded(
+              child: SingleChildScrollView(
+                key: const Key('landscape-rail-scroll'),
+                child: Column(
+                  children: [
+                    for (final destination in _landscapeDestinations.where(
+                      _DesktopDestination.isShown,
+                    )) ...[
+                      _RailDestinationTile(
+                        destination: destination,
+                        selected: destination.branch == currentIndex,
+                        onTap: () => onSelect(destination.branch!),
+                      ),
+                      const SizedBox(height: 4),
+                    ],
+                    _RailIconButton(
+                      key: const Key('landscape-rail-search'),
+                      icon: Icons.search_rounded,
+                      label: 'Search platform',
+                      onTap: () => _openGlobalSearch(context),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            const _RailStopButton(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RailDestinationTile extends StatelessWidget {
+  const _RailDestinationTile({
+    required this.destination,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _DesktopDestination destination;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: destination.label,
+    // The tile's own semantics replace the InkWell's, so the tap action is
+    // declared here for screen readers.
+    child: Semantics(
+      key: Key('landscape-nav-${destination.branch}'),
+      label: destination.label,
+      selected: selected,
+      button: true,
+      onTap: onTap,
+      excludeSemantics: true,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Ink(
+          width: 56,
+          height: AppLayout.touchTarget,
+          decoration: BoxDecoration(
+            gradient: selected
+                ? const LinearGradient(
+                    colors: [Color(0xA8DED1FF), Color(0x6BD1E3FF)],
+                  )
+                : null,
+            borderRadius: BorderRadius.circular(16),
+            border: selected
+                ? Border.all(color: const Color(0x298C61F5))
+                : null,
+          ),
+          child: Icon(
+            destination.icon,
+            size: 22,
+            color: selected ? const Color(0xFF3D149E) : const Color(0xFF4B5370),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _RailIconButton extends StatelessWidget {
+  const _RailIconButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => SizedBox.square(
+    dimension: AppLayout.touchTarget,
+    child: IconButton(
+      tooltip: label,
+      onPressed: onTap,
+      icon: Icon(icon, color: const Color(0xFF4B5370)),
+    ),
+  );
+}
+
+/// The live robot link, read from the connection. Opens Settings, where the
+/// connection is managed.
+class _RailRobotStatus extends ConsumerWidget {
+  const _RailRobotStatus({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final status = ref.watch(robotLinkProvider.select((link) => link.status));
+    final (label, color) = switch (status) {
+      RobotLinkStatus.connected => ('Connected', const Color(0xFF1AAF68)),
+      RobotLinkStatus.awaitingTelemetry => (
+        'Waiting for telemetry',
+        const Color(0xFFF5A400),
+      ),
+      RobotLinkStatus.degraded => ('Degraded', const Color(0xFFF5A400)),
+      RobotLinkStatus.connecting => ('Connecting', const Color(0xFFF5A400)),
+      RobotLinkStatus.reconnecting => ('Reconnecting', const Color(0xFFF5A400)),
+      RobotLinkStatus.authenticationRequired => (
+        'Authentication required',
+        AppColors.error,
+      ),
+      RobotLinkStatus.disconnected => ('Disconnected', const Color(0xFF8A90A6)),
+    };
+    return Tooltip(
+      message: 'G1 Gustav · $label',
+      child: Semantics(
+        key: const Key('landscape-robot-status'),
+        label: 'Robot G1 Gustav, $label. Open connection settings.',
+        button: true,
+        onTap: onTap,
+        excludeSemantics: true,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: SizedBox.square(
+            dimension: 52,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                const _RobotAvatar(),
+                Positioned(
+                  right: 4,
+                  bottom: 4,
+                  child: Container(
+                    key: ValueKey('landscape-link-${status.name}'),
+                    width: 13,
+                    height: 13,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Uses the same [MotionController.stop] as the Motion screen, so every
+/// safety check in the motion command session still applies.
+class _RailStopButton extends ConsumerWidget {
+  const _RailStopButton();
+
+  Future<void> _stop(BuildContext context, WidgetRef ref) async {
+    void notify() => notifyMotionCommand(
+      ref.read(appNotificationsProvider.notifier),
+      ref.read(motionProvider),
+    );
+    // Report "Stopping…" at once, then the robot's answer. Keyed
+    // notifications update in place, so the Motion screen's own listener
+    // never shows a duplicate.
+    final result = ref.read(motionProvider.notifier).stop();
+    notify();
+    await result;
+    if (context.mounted) notify();
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Tooltip(
+    message: 'Stop robot motion',
+    child: Semantics(
+      key: const Key('landscape-stop'),
+      label: 'Stop robot motion',
+      button: true,
+      onTap: () => _stop(context, ref),
+      excludeSemantics: true,
+      child: Material(
+        color: const Color(0xFFFFEBEF),
+        shape: const CircleBorder(side: BorderSide(color: Color(0x52ED3155))),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: () => _stop(context, ref),
+          child: const SizedBox.square(
+            dimension: 56,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.stop_rounded, color: Color(0xFFED3155), size: 24),
+                // Fixed size inside the 56 dp disc; the semantics label
+                // carries the name at any text scale.
+                Text(
+                  'Stop',
+                  textScaler: TextScaler.noScaling,
+                  style: TextStyle(
+                    color: Color(0xFFED3155),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
 
 class _AppHeader extends StatelessWidget {
   const _AppHeader({required this.layout});
@@ -552,26 +903,74 @@ class _DesktopSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final destinations = <_DesktopDestination>[
-      const _DesktopDestination('Dashboard', Icons.dashboard_outlined, 0),
-      const _DesktopDestination('AI Workspace', Icons.auto_awesome_outlined, 5),
-      const _DesktopDestination('Motion', Icons.trending_up, 1),
+      const _DesktopDestination(
+        'Dashboard',
+        Icons.dashboard_outlined,
+        NavFeature.dashboard,
+        0,
+      ),
+      const _DesktopDestination(
+        'AI Workspace',
+        Icons.auto_awesome_outlined,
+        NavFeature.aiWorkspace,
+        5,
+      ),
+      const _DesktopDestination(
+        'Motion',
+        Icons.trending_up,
+        NavFeature.motion,
+        1,
+      ),
       const _DesktopDestination(
         'AI Voice Studio',
         Icons.record_voice_over_outlined,
+        NavFeature.voiceStudio,
         6,
       ),
-      const _DesktopDestination('Vision', Icons.visibility_outlined, 3),
-      const _DesktopDestination('Audio', Icons.graphic_eq_outlined, 2),
-      const _DesktopDestination('Controller', Icons.sports_esports_outlined),
+      const _DesktopDestination(
+        'Vision',
+        Icons.visibility_outlined,
+        NavFeature.vision,
+        3,
+      ),
+      const _DesktopDestination(
+        'Audio',
+        Icons.graphic_eq_outlined,
+        NavFeature.audio,
+        2,
+      ),
+      const _DesktopDestination(
+        'Controller',
+        Icons.sports_esports_outlined,
+        NavFeature.controller,
+      ),
       const _DesktopDestination(
         'Manipulation',
         Icons.precision_manufacturing_outlined,
+        NavFeature.manipulation,
       ),
-      const _DesktopDestination('Automation', Icons.account_tree_outlined),
-      const _DesktopDestination('Files', Icons.folder_outlined),
-      const _DesktopDestination('Logs', Icons.article_outlined),
-      const _DesktopDestination('Settings', Icons.settings_outlined, 4),
-    ];
+      const _DesktopDestination(
+        'Automation',
+        Icons.account_tree_outlined,
+        NavFeature.automation,
+      ),
+      const _DesktopDestination(
+        'Files',
+        Icons.folder_outlined,
+        NavFeature.files,
+      ),
+      const _DesktopDestination(
+        'Logs',
+        Icons.article_outlined,
+        NavFeature.logs,
+      ),
+      const _DesktopDestination(
+        'Settings',
+        Icons.settings_outlined,
+        NavFeature.settings,
+        4,
+      ),
+    ].where(_DesktopDestination.isShown);
 
     return Container(
       width: 200,
@@ -629,7 +1028,12 @@ class _DesktopSidebar extends StatelessWidget {
 }
 
 class _DesktopDestination {
-  const _DesktopDestination(this.label, this.icon, [this.branch]);
+  const _DesktopDestination(this.label, this.icon, this.feature, [this.branch]);
+
+  static bool isShown(_DesktopDestination destination) =>
+      NavigationVisibility.isVisible(destination.feature);
+
+  final NavFeature feature;
 
   final String label;
   final IconData icon;
@@ -713,13 +1117,43 @@ class _MediumRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final destinations = <_DesktopDestination>[
-      const _DesktopDestination('Dashboard', Icons.dashboard_outlined, 0),
-      const _DesktopDestination('AI Agent', Icons.auto_awesome_outlined, 5),
-      const _DesktopDestination('Control', Icons.sports_esports_outlined, 1),
-      const _DesktopDestination('Voice', Icons.record_voice_over_outlined, 6),
-      const _DesktopDestination('Perception', Icons.visibility_outlined, 3),
-      const _DesktopDestination('Settings', Icons.settings_outlined, 4),
-    ];
+      const _DesktopDestination(
+        'Dashboard',
+        Icons.dashboard_outlined,
+        NavFeature.dashboard,
+        0,
+      ),
+      const _DesktopDestination(
+        'AI Agent',
+        Icons.auto_awesome_outlined,
+        NavFeature.aiWorkspace,
+        5,
+      ),
+      const _DesktopDestination(
+        'Control',
+        Icons.sports_esports_outlined,
+        NavFeature.motion,
+        1,
+      ),
+      const _DesktopDestination(
+        'Voice',
+        Icons.record_voice_over_outlined,
+        NavFeature.voiceStudio,
+        6,
+      ),
+      const _DesktopDestination(
+        'Perception',
+        Icons.visibility_outlined,
+        NavFeature.vision,
+        3,
+      ),
+      const _DesktopDestination(
+        'Settings',
+        Icons.settings_outlined,
+        NavFeature.settings,
+        4,
+      ),
+    ].where(_DesktopDestination.isShown);
     return Container(
       width: 96,
       padding: const EdgeInsets.fromLTRB(12, 16, 12, 0),
@@ -860,11 +1294,12 @@ class _MoreDestinations extends StatelessWidget {
             title: const Text('Vision'),
             onTap: () => Navigator.pop(context, 3),
           ),
-          ListTile(
-            leading: const Icon(Icons.graphic_eq_outlined),
-            title: const Text('Audio'),
-            onTap: () => Navigator.pop(context, 2),
-          ),
+          if (NavigationVisibility.isVisible(NavFeature.audio))
+            ListTile(
+              leading: const Icon(Icons.graphic_eq_outlined),
+              title: const Text('Audio'),
+              onTap: () => Navigator.pop(context, 2),
+            ),
           ListTile(
             leading: const Icon(Icons.settings_outlined),
             title: const Text('Settings'),
@@ -890,7 +1325,7 @@ List<_SearchDestination> _matchingDestinations(
       .split(RegExp(r'\s+'))
       .where((term) => term.isNotEmpty)
       .toList(growable: false);
-  final matches = _searchDestinations
+  final matches = _visibleSearchDestinations
       .where((item) {
         final matchesText =
             terms.isEmpty || terms.every(item.searchable.contains);
@@ -1295,7 +1730,13 @@ class _SearchDestination {
   String get searchable => '$title $section $keywords'.toLowerCase();
 }
 
-const _searchDestinations = <_SearchDestination>[
+/// Search entries whose destination is not hidden.
+Iterable<_SearchDestination> get _visibleSearchDestinations =>
+    _allSearchDestinations.where(
+      (item) => NavigationVisibility.isRouteVisible(item.route),
+    );
+
+const _allSearchDestinations = <_SearchDestination>[
   _SearchDestination(
     title: 'Dashboard',
     section: 'Robot overview and live metrics',
@@ -1513,9 +1954,9 @@ class _PlatformSearchDelegate extends SearchDelegate<String> {
         .split(RegExp(r'\s+'))
         .where((term) => term.isNotEmpty);
     if (terms.isEmpty) {
-      return _searchDestinations.take(6).toList(growable: false);
+      return _visibleSearchDestinations.take(6).toList(growable: false);
     }
-    return _searchDestinations
+    return _visibleSearchDestinations
         .where((item) => terms.every(item.searchable.contains))
         .toList(growable: false);
   }

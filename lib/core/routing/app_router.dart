@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:robot_control_app/core/navigation/navigation_visibility.dart';
 import 'package:robot_control_app/core/routing/app_routes.dart';
 import 'package:robot_control_app/features/ai_workspace/presentation/ai_workspace_screen.dart';
 import 'package:robot_control_app/features/audio/presentation/audio_screen.dart';
@@ -44,6 +45,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: AppRoutes.audio,
+                // Hidden while unfinished: links and restored state land on
+                // the Dashboard instead.
+                redirect: (context, state) =>
+                    NavigationVisibility.isRouteVisible(AppRoutes.audio)
+                    ? null
+                    : AppRoutes.dashboard,
                 builder: (context, state) => const AudioScreen(),
               ),
             ],

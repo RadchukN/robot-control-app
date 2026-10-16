@@ -35,6 +35,20 @@ class VoiceDeviceEvent extends VoiceBackendEvent {
   final DeviceStatus speaker;
 }
 
+/// Public controls only: session credentials never enter provider/UI state.
+class VoiceControlEvent extends VoiceBackendEvent {
+  const VoiceControlEvent({
+    required this.available,
+    required this.idle,
+    required this.canStop,
+    this.reason,
+  });
+  final bool available;
+  final bool idle;
+  final bool canStop;
+  final String? reason;
+}
+
 enum TtsEventPhase { speaking, completed, cancelled, failed }
 
 class TtsStatusEvent extends VoiceBackendEvent {

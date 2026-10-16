@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:robot_control_app/core/theme/app_spacing.dart';
 import 'package:robot_control_app/features/ai_workspace/application/ai_workspace_state.dart';
+import 'package:robot_control_app/shared/layout/app_layout.dart';
 
 class AiWorkspaceScreen extends ConsumerWidget {
   const AiWorkspaceScreen({super.key});
@@ -32,7 +33,11 @@ class AiWorkspaceView extends StatelessWidget {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final compact = screenWidth < 600;
     final showInspector = screenWidth >= 1200;
-    final outerGutter = compact ? 16.0 : (showInspector ? 0.0 : 24.0);
+    final outerGutter = AppLayout.landscapeOf(context)
+        ? 0.0
+        : compact
+        ? 16.0
+        : (showInspector ? 0.0 : 24.0);
 
     return Container(
       key: const Key('ai-workspace-screen'),
@@ -53,34 +58,41 @@ class AiWorkspaceView extends StatelessWidget {
           ),
           child: DefaultTextStyle.merge(
             style: const TextStyle(fontFamily: 'Inter'),
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                compact ? 12 : 20,
-                compact ? 12 : 20,
-                compact ? 12 : 20,
-                compact ? 12 : (showInspector ? 12 : 20),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _WorkspaceHeader(compact: compact),
-                  const SizedBox(height: 14),
-                  _ContextBar(state: state, compact: compact),
-                  const SizedBox(height: 14),
-                  Expanded(
-                    child: _MainWorkspace(
-                      state: state,
-                      compact: compact,
-                      showInspector: showInspector,
-                      onConfirm: onConfirm,
-                      onCancel: onCancel,
+            child: AppLayout.landscapeOf(context)
+                ? _LandscapeWorkspace(
+                    state: state,
+                    onSend: onSend,
+                    onConfirm: onConfirm,
+                    onCancel: onCancel,
+                  )
+                : Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      compact ? 12 : 20,
+                      compact ? 12 : 20,
+                      compact ? 12 : 20,
+                      compact ? 12 : (showInspector ? 12 : 20),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _WorkspaceHeader(compact: compact),
+                        const SizedBox(height: 14),
+                        _ContextBar(state: state, compact: compact),
+                        const SizedBox(height: 14),
+                        Expanded(
+                          child: _MainWorkspace(
+                            state: state,
+                            compact: compact,
+                            showInspector: showInspector,
+                            onConfirm: onConfirm,
+                            onCancel: onCancel,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        _Composer(compact: compact, onSend: onSend),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 14),
-                  _Composer(compact: compact, onSend: onSend),
-                ],
-              ),
-            ),
           ),
         ),
       ),
@@ -88,14 +100,78 @@ class AiWorkspaceView extends StatelessWidget {
   }
 }
 
+/// Phones on their side: title and context share one row, which steps aside
+/// while the keyboard is up so the conversation, confirmation and composer
+/// stay on screen.
+class _LandscapeWorkspace extends StatelessWidget {
+  const _LandscapeWorkspace({
+    required this.state,
+    required this.onSend,
+    required this.onConfirm,
+    required this.onCancel,
+  });
+
+  final AiWorkspaceState state;
+  final ValueChanged<String>? onSend;
+  final VoidCallback? onConfirm;
+  final VoidCallback? onCancel;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      // The shell resizes for the keyboard, so a short body means it is up.
+      final keyboardRoom = constraints.maxHeight < 260;
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (!keyboardRoom) ...[
+              Row(
+                key: const Key('ai-landscape-top'),
+                children: [
+                  const Expanded(
+                    flex: 2,
+                    child: _WorkspaceHeader(compact: true, fitText: true),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 3,
+                    child: _ContextBar(state: state, compact: false),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+            ],
+            Expanded(
+              child: _MainWorkspace(
+                state: state,
+                compact: false,
+                showInspector: false,
+                onConfirm: onConfirm,
+                onCancel: onCancel,
+              ),
+            ),
+            const SizedBox(height: 8),
+            _Composer(compact: true, fitText: true, onSend: onSend),
+          ],
+        ),
+      );
+    },
+  );
+}
+
 class _WorkspaceHeader extends StatelessWidget {
-  const _WorkspaceHeader({required this.compact});
+  const _WorkspaceHeader({required this.compact, this.fitText = false});
 
   final bool compact;
 
+  /// Lets the header grow with the text size instead of a fixed height.
+  final bool fitText;
+
   @override
   Widget build(BuildContext context) => SizedBox(
-    height: compact ? 47 : 53,
+    height: fitText ? null : (compact ? 47 : 53),
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -669,10 +745,17 @@ class _LiveContext extends StatelessWidget {
 }
 
 class _Composer extends StatefulWidget {
-  const _Composer({required this.compact, required this.onSend});
+  const _Composer({
+    required this.compact,
+    required this.onSend,
+    this.fitText = false,
+  });
 
   final bool compact;
   final ValueChanged<String>? onSend;
+
+  /// Grows with the text size instead of a fixed height.
+  final bool fitText;
 
   @override
   State<_Composer> createState() => _ComposerState();
@@ -698,8 +781,12 @@ class _ComposerState extends State<_Composer> {
 
   @override
   Widget build(BuildContext context) => Container(
-    height: widget.compact ? 64 : 72,
-    padding: widget.compact
+    key: const Key('ai-composer'),
+    height: widget.fitText ? null : (widget.compact ? 64 : 72),
+    constraints: widget.fitText ? const BoxConstraints(minHeight: 60) : null,
+    padding: widget.fitText
+        ? const EdgeInsets.fromLTRB(18, 6, 6, 6)
+        : widget.compact
         ? const EdgeInsets.fromLTRB(14, 14, 14, 7)
         : const EdgeInsets.all(14),
     decoration: BoxDecoration(
@@ -718,10 +805,12 @@ class _ComposerState extends State<_Composer> {
       children: [
         Expanded(
           child: Column(
+            mainAxisSize: widget.fitText ? MainAxisSize.min : MainAxisSize.max,
             mainAxisAlignment: MainAxisAlignment.start,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               TextField(
+                key: const Key('ai-composer-field'),
                 controller: _controller,
                 onSubmitted: (_) => _submit(),
                 maxLines: 1,
@@ -924,7 +1013,7 @@ class _ActionSurface extends StatelessWidget {
         onTap: onPressed,
         borderRadius: BorderRadius.circular(999),
         child: Ink(
-          height: 43,
+          height: AppLayout.landscapeOf(context) ? AppLayout.touchTarget : 43,
           padding: const EdgeInsets.symmetric(horizontal: 18),
           decoration: decoration,
           child: Center(

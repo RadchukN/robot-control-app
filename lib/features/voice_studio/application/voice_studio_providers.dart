@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:robot_control_app/features/voice_studio/data/mock_voice_backend.dart';
+import 'package:robot_control_app/features/voice_studio/data/live_voice_backend.dart';
+import 'package:robot_control_app/features/dashboard/application/dashboard_controller.dart';
 import 'package:robot_control_app/features/voice_studio/data/voice_backend.dart';
 import 'package:robot_control_app/features/voice_studio/domain/voice_models.dart';
 import 'package:robot_control_app/services/robot_connection.dart';
@@ -10,8 +12,7 @@ final voiceClockProvider = Provider<DateTime Function()>(
   name: 'VoiceClockProvider',
 );
 
-/// Demo Mode is on by default because the Jetson voice backend is not
-/// finalized. It only affects voice and TTS; it never opens a connection.
+/// Demo Mode is on by default; it never sends live voice or TTS requests.
 class VoiceDemoMode extends Notifier<bool> {
   @override
   bool build() => true;
@@ -24,7 +25,7 @@ class VoiceDemoMode extends Notifier<bool> {
         .add(
           enabled
               ? 'Demo Mode on: voice and TTS are simulated.'
-              : 'Demo Mode off: robot voice backend unavailable.',
+              : 'Demo Mode off: checking backend voice availability.',
           level: enabled ? VoiceLogLevel.info : VoiceLogLevel.warning,
         );
   }
@@ -35,11 +36,41 @@ final voiceDemoModeProvider = NotifierProvider<VoiceDemoMode, bool>(
   name: 'VoiceDemoModeProvider',
 );
 
-/// Switching mode disposes the previous backend, which ends any session.
+final voiceFrameTransportProvider = Provider<VoiceFrameTransport>(
+  (ref) =>
+      DashboardVoiceTransport(ref.read(dashboardControllerProvider.notifier)),
+  name: 'VoiceFrameTransportProvider',
+);
+
+/// Link changes preserve this adapter and its private resume credentials.
 final voiceBackendProvider = Provider<VoiceBackend>((ref) {
-  final backend = ref.watch(voiceDemoModeProvider)
-      ? MockVoiceBackend(now: ref.read(voiceClockProvider))
-      : UnavailableVoiceBackend();
+  final VoiceBackend backend;
+  if (ref.watch(voiceDemoModeProvider)) {
+    backend = MockVoiceBackend(now: ref.read(voiceClockProvider));
+  } else {
+    final live = LiveVoiceBackend(
+      ref.read(voiceFrameTransportProvider),
+      now: ref.read(voiceClockProvider),
+    );
+    backend = live;
+    void update() {
+      if (!ref.mounted) return;
+      final status = ref.read(robotLinkProvider).status;
+      final linked = const {
+        RobotLinkStatus.connected,
+        RobotLinkStatus.awaitingTelemetry,
+        RobotLinkStatus.degraded,
+      }.contains(status);
+      live.connectionChanged(
+        linked,
+        ref.read(selectedRobotEndpointProvider).uri.toString(),
+      );
+    }
+
+    ref.listen(robotLinkProvider, (_, _) => update());
+    ref.listen(selectedRobotEndpointProvider, (_, _) => update());
+    Future.microtask(update);
+  }
   ref.onDispose(backend.dispose);
   return backend;
 }, name: 'VoiceBackendProvider');

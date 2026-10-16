@@ -144,7 +144,7 @@ class _SessionTile extends StatelessWidget {
     final session = state.session;
     final (label, detail, color) = switch (session) {
       VoiceSessionState.idle => (
-        'Idle',
+        state.simulated || state.backendIdle ? 'Idle' : 'Checking',
         state.canStart
             ? 'Ready to start conversation'
             : state.unavailableReason ?? 'Voice backend unavailable',
@@ -171,8 +171,10 @@ class _SessionTile extends StatelessWidget {
         _red,
       ),
       VoiceSessionState.disconnected => (
-        'Disconnected',
-        'Robot link is down. Voice is unavailable.',
+        state.linkConnected ? 'Reconnecting' : 'Disconnected',
+        state.linkConnected
+            ? 'Checking the previous session and ownership…'
+            : 'Robot link is down. Voice is unavailable.',
         _red,
       ),
       VoiceSessionState.busy => (

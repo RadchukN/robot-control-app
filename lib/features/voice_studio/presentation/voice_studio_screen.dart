@@ -14,6 +14,7 @@ import 'package:robot_control_app/features/voice_studio/application/voice_studio
 import 'package:robot_control_app/features/voice_studio/domain/transcript_buffer.dart';
 import 'package:robot_control_app/features/voice_studio/domain/voice_models.dart';
 import 'package:robot_control_app/services/robot_connection.dart';
+import 'package:robot_control_app/shared/layout/app_layout.dart';
 import 'package:robot_control_app/shared/notifications/app_notification_service.dart';
 
 part 'voice_studio_style.dart';
@@ -78,7 +79,7 @@ class VoiceStudioScreen extends ConsumerWidget {
             notifications().warning(
               'Voice disconnected',
               description:
-                  'The robot link dropped. Start again when it returns.',
+                  'The robot link dropped. Checking the previous session after reconnecting.',
               key: key,
             );
           default:
@@ -129,7 +130,7 @@ class VoiceStudioScreen extends ConsumerWidget {
           demo ? 'Demo Mode on' : 'Demo Mode off',
           description: demo
               ? 'Voice and TTS are simulated. Nothing is sent to the robot.'
-              : 'The robot voice backend is not available yet.',
+              : 'Checking the robot voice backend. Start requires available and idle status.',
           key: 'voice-mode',
         );
       })
@@ -151,6 +152,9 @@ class VoiceStudioScreen extends ConsumerWidget {
     ),
     child: LayoutBuilder(
       builder: (context, constraints) {
+        if (AppLayout.landscapeOf(context)) {
+          return const _LandscapeVoiceStudio();
+        }
         final compact = constraints.maxWidth < 600;
         return SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(
@@ -255,12 +259,222 @@ class _VoiceStudioLayout extends StatelessWidget {
   }
 }
 
+enum _VoiceSection {
+  conversation('Conversation', Icons.mic_none_rounded),
+  transcript('Transcript', Icons.notes_rounded),
+  speech('Text to speech', Icons.record_voice_over_outlined),
+  quickMotions('Quick motions', Icons.bolt_rounded),
+  connection('Connection', Icons.lan_outlined);
+
+  const _VoiceSection(this.label, this.icon);
+
+  final String label;
+  final IconData icon;
+}
+
+/// Phones on their side: the same five panels, one at a time at full
+/// height, picked from a section list. Stop AI stays in reach while a
+/// conversation runs, whichever panel is open.
+class _LandscapeVoiceStudio extends ConsumerStatefulWidget {
+  const _LandscapeVoiceStudio();
+
+  @override
+  ConsumerState<_LandscapeVoiceStudio> createState() =>
+      _LandscapeVoiceStudioState();
+}
+
+class _LandscapeVoiceStudioState extends ConsumerState<_LandscapeVoiceStudio> {
+  var _section = _VoiceSection.conversation;
+
+  @override
+  Widget build(BuildContext context) {
+    final conversationActive = ref.watch(
+      realtimeVoiceProvider.select((s) => s.canStop),
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const _StudioHeader(),
+          const SizedBox(height: 10),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(
+                  width: 156,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: ListView(
+                          key: const Key('voice-landscape-sections'),
+                          children: [
+                            for (final section in _VoiceSection.values)
+                              _SectionTile(
+                                section: section,
+                                selected: section == _section,
+                                live:
+                                    section == _VoiceSection.conversation &&
+                                    conversationActive,
+                                onTap: () => setState(() => _section = section),
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (conversationActive) ...[
+                        const SizedBox(height: 8),
+                        _StopConversationButton(
+                          onTap: ref.read(realtimeVoiceProvider.notifier).stop,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  // Keeps every panel's local state (drafts, scroll) while
+                  // switching sections.
+                  child: IndexedStack(
+                    index: _section.index,
+                    sizing: StackFit.expand,
+                    children: const [
+                      // Content-sized panels scroll as a whole on short
+                      // screens; the others scroll inside their cards.
+                      SingleChildScrollView(
+                        key: Key('voice-landscape-realtime'),
+                        child: _RealtimePanel(fill: false),
+                      ),
+                      _TranscriptPanel(),
+                      SingleChildScrollView(child: _TtsPanel(fill: false)),
+                      _QuickMotionsPanel(),
+                      _ConnectionPanel(),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionTile extends StatelessWidget {
+  const _SectionTile({
+    required this.section,
+    required this.selected,
+    required this.live,
+    required this.onTap,
+  });
+
+  final _VoiceSection section;
+  final bool selected;
+  final bool live;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Semantics(
+      key: Key('voice-section-${section.name}'),
+      selected: selected,
+      button: true,
+      label: live ? '${section.label}, conversation active' : section.label,
+      onTap: onTap,
+      excludeSemantics: true,
+      child: Material(
+        color: selected ? _purpleSoft : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: AppLayout.touchTarget),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Row(
+                children: [
+                  Icon(
+                    section.icon,
+                    size: 18,
+                    color: selected ? _purple : _body,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      section.label,
+                      style: _text(
+                        12,
+                        height: 16 / 12,
+                        weight: selected ? FontWeight.w600 : FontWeight.w500,
+                        color: selected ? _purple : _body,
+                      ),
+                    ),
+                  ),
+                  if (live)
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: _green,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _StopConversationButton extends StatelessWidget {
+  const _StopConversationButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: _redSoft,
+    borderRadius: BorderRadius.circular(12),
+    child: InkWell(
+      key: const Key('voice-landscape-stop-ai'),
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
+        height: AppLayout.touchTarget,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.stop_circle_outlined, size: 18, color: _red),
+            const SizedBox(width: 6),
+            Text(
+              'Stop AI',
+              style: _text(
+                12,
+                height: 16 / 12,
+                weight: FontWeight.w600,
+              ).copyWith(color: _red),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class _StudioHeader extends ConsumerWidget {
   const _StudioHeader();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final demo = ref.watch(voiceDemoModeProvider);
+    final voice = ref.watch(realtimeVoiceProvider);
     final title = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -270,7 +484,7 @@ class _StudioHeader extends ConsumerWidget {
         ),
         Text(
           'Realtime conversation, text-to-speech and quick motions for G1.',
-          maxLines: 2,
+          maxLines: AppLayout.landscapeOf(context) ? 1 : 2,
           overflow: TextOverflow.ellipsis,
           style: _text(13, height: 17 / 13, color: _muted),
         ),
@@ -301,13 +515,17 @@ class _StudioHeader extends ConsumerWidget {
             key: const Key('voice-demo-toggle'),
             value: demo,
             activeTrackColor: _purple,
-            onChanged: ref.read(voiceDemoModeProvider.notifier).set,
+            // Keep live Stop accessible until the observed session is terminal.
+            onChanged: !demo && voice.canStop
+                ? null
+                : ref.read(voiceDemoModeProvider.notifier).set,
           ),
         ],
       ),
     );
     return LayoutBuilder(
-      builder: (context, constraints) => constraints.maxWidth < 640
+      builder: (context, constraints) =>
+          constraints.maxWidth < 640 && !AppLayout.landscapeOf(context)
           ? Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [title, const SizedBox(height: 10), toggle],

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:robot_control_app/core/theme/app_spacing.dart';
+import 'package:robot_control_app/shared/layout/app_layout.dart';
 import 'package:robot_control_app/core/theme/app_colors.dart';
 import 'package:robot_control_app/core/theme/theme_provider.dart';
 import 'package:robot_control_app/features/settings/application/audio_devices_controller.dart';
@@ -1264,7 +1265,7 @@ class _TabletSettings extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(
-            height: 51,
+            height: AppLayout.landscapeOf(context) ? null : 51,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1367,7 +1368,7 @@ class _TabletCategorySelector extends StatelessWidget {
             .map((item) => PopupMenuItem(value: item, child: Text(item.label)))
             .toList(),
         child: SizedBox(
-          height: 38,
+          height: AppLayout.landscapeOf(context) ? AppLayout.touchTarget : 38,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14),
             child: Row(
@@ -1574,7 +1575,7 @@ class _PhoneSettings extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(
-            height: 80,
+            height: AppLayout.landscapeOf(context) ? null : 80,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1677,8 +1678,10 @@ class _PhoneCategoryItem extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
         hoverColor: _selected.withValues(alpha: 0.55),
-        child: SizedBox(
-          height: 49,
+        child: ConstrainedBox(
+          constraints: AppLayout.landscapeOf(context)
+              ? const BoxConstraints(minHeight: 49)
+              : const BoxConstraints.tightFor(height: 49),
           child: Padding(
             padding: const EdgeInsets.symmetric(
               horizontal: AppSpacing.sm,

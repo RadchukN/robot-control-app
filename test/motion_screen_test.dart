@@ -10,6 +10,7 @@ import 'package:robot_control_app/models/dashboard_data.dart';
 import 'package:robot_control_app/services/robot_service.dart';
 
 import 'fixture_api_client.dart';
+import 'landscape/landscape_harness.dart' show loadRealFonts, layoutErrors;
 
 // These UI/local-editing tests must never connect to the live robot.
 class _OfflineDashboardController extends DashboardController {
@@ -22,6 +23,7 @@ class _OfflineDashboardController extends DashboardController {
 }
 
 void main() {
+  setUpAll(loadRealFonts);
   testWidgets('Motion route fits the approved reference viewports', (
     tester,
   ) async {
@@ -45,21 +47,23 @@ void main() {
         ],
       );
 
-      await tester.pumpWidget(
-        UncontrolledProviderScope(
-          container: container,
-          child: const RobotControlApp(),
-        ),
-      );
-      await tester.pumpAndSettle();
-      container.read(appRouterProvider).go(AppRoutes.motion);
-      await tester.pumpAndSettle();
+      final errors = await layoutErrors(() async {
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const RobotControlApp(),
+          ),
+        );
+        await tester.pumpAndSettle();
+        container.read(appRouterProvider).go(AppRoutes.motion);
+        await tester.pumpAndSettle();
+      });
 
       expect(find.byKey(const Key('motion-screen')), findsOneWidget);
       expect(find.text('Quick gestures'), findsOneWidget);
       expect(find.textContaining('Saved motions'), findsOneWidget);
       expect(find.text('Motion status'), findsOneWidget);
-      expect(tester.takeException(), isNull, reason: 'Viewport: $size');
+      expect(errors, isEmpty, reason: 'Viewport: $size');
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();

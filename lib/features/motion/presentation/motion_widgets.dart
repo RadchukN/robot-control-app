@@ -1,5 +1,168 @@
 part of 'motion_screen.dart';
 
+/// Phones on their side: the catalog scrolls on the left while playback
+/// status, progress, Play and Stop stay pinned on the right.
+class _LandscapeMotionLayout extends StatelessWidget {
+  const _LandscapeMotionLayout({
+    required this.state,
+    required this.controller,
+    required this.width,
+  });
+
+  final MotionState state;
+  final MotionController controller;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    final dockWidth = width >= 700 ? 248.0 : 216.0;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            key: const Key('motion-landscape-scroll'),
+            padding: const EdgeInsets.fromLTRB(12, 12, 6, 16),
+            child: _MotionPage(
+              state: state,
+              controller: controller,
+              width: width - dockWidth,
+            ),
+          ),
+        ),
+        SizedBox(
+          width: dockWidth,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(6, 12, 12, 12),
+            child: _LandscapePlaybackDock(state: state, controller: controller),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LandscapePlaybackDock extends StatelessWidget {
+  const _LandscapePlaybackDock({required this.state, required this.controller});
+
+  final MotionState state;
+  final MotionController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = state.selectedMotion;
+    final status = state.playbackStatus;
+    // A dry run and a command the robot is executing must never look alike.
+    final (String, IconData, Color)? mode = switch (status) {
+      MotionPlaybackStatus.simulated => (
+        'Dry run · robot did not move',
+        Icons.science_outlined,
+        _amber,
+      ),
+      MotionPlaybackStatus.sending ||
+      MotionPlaybackStatus.playing ||
+      MotionPlaybackStatus.stopping => (
+        'Physical motion on robot',
+        Icons.precision_manufacturing_outlined,
+        _red,
+      ),
+      _ => null,
+    };
+    return _MotionPanel(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        key: const Key('motion-playback-dock'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const _SectionHeading(
+                    icon: Icons.play_arrow_rounded,
+                    title: 'Playback',
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    selected?.name ?? 'No motion selected',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: _motionText(
+                      12,
+                      height: 16 / 12,
+                      weight: FontWeight.w600,
+                      color: selected == null ? _muted : _ink,
+                    ),
+                  ),
+                  if (mode != null) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      key: Key(
+                        status == MotionPlaybackStatus.simulated
+                            ? 'motion-dry-run-badge'
+                            : 'motion-physical-badge',
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: mode.$3.withValues(alpha: 0.1),
+                        border: Border.all(
+                          color: mode.$3.withValues(alpha: 0.35),
+                        ),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(mode.$2, size: 15, color: mode.$3),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              mode.$1,
+                              style: _motionText(
+                                10,
+                                height: 13 / 10,
+                                weight: FontWeight.w600,
+                                color: mode.$3,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  _PlaybackProgress(state: state),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          _GradientButton(
+            key: const Key('motion-dock-play'),
+            label: 'Play',
+            icon: Icons.play_arrow_rounded,
+            expanded: true,
+            onTap: selected == null
+                ? null
+                : () => controller.playMotion(selected.id),
+          ),
+          const SizedBox(height: 8),
+          _SoftButton(
+            key: const Key('motion-dock-stop'),
+            label: 'Stop',
+            icon: Icons.stop_rounded,
+            expanded: true,
+            onTap: controller.stop,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MotionPage extends StatelessWidget {
   const _MotionPage({
     required this.state,
@@ -175,6 +338,7 @@ class _QuickGestures extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final touch = AppLayout.landscapeOf(context);
     return _MotionPanel(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       child: Column(
@@ -187,7 +351,7 @@ class _QuickGestures extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           SizedBox(
-            height: 86,
+            height: touch ? 104 : 86,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: state.quickGestures.length,
@@ -226,7 +390,7 @@ class _GestureCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 104,
+      width: AppLayout.landscapeOf(context) ? 124 : 104,
       padding: const EdgeInsets.fromLTRB(9, 8, 7, 7),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.78),
@@ -340,6 +504,9 @@ class _SavedMotionsState extends State<_SavedMotions> {
   Widget build(BuildContext context) {
     final state = widget.state;
     final controller = widget.controller;
+    // On phones the page is the only scroll view (no trapped inner scroll)
+    // and the pinned dock already shows playback progress.
+    final touch = AppLayout.landscapeOf(context);
     return _MotionPanel(
       padding: const EdgeInsets.all(14),
       child: Column(
@@ -351,22 +518,28 @@ class _SavedMotionsState extends State<_SavedMotions> {
                 icon: Icons.folder_rounded,
                 title: 'Saved motions (${state.savedMotions.length})',
               );
-              final filters = Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: constraints.maxWidth < 620 ? 150 : 190,
-                    height: 36,
-                    child: TextField(
-                      key: const Key('motion-search'),
-                      onChanged: controller.setSearchQuery,
-                      style: _motionText(11, height: 14 / 11, color: _body),
-                      decoration: _inputDecoration(
-                        'Search motions...',
-                        icon: Icons.search_rounded,
-                      ),
-                    ),
+              final search = SizedBox(
+                width: constraints.maxWidth < 620 ? 150 : 190,
+                height: touch ? AppLayout.touchTarget : 36,
+                child: TextField(
+                  key: const Key('motion-search'),
+                  onChanged: controller.setSearchQuery,
+                  style: _motionText(11, height: 14 / 11, color: _body),
+                  decoration: _inputDecoration(
+                    'Search motions...',
+                    icon: Icons.search_rounded,
                   ),
+                ),
+              );
+              // Stacked on a narrow phone column, the search takes the
+              // width the type filter leaves.
+              final stacked = constraints.maxWidth < 600;
+              final filters = Row(
+                mainAxisSize: touch && stacked
+                    ? MainAxisSize.max
+                    : MainAxisSize.min,
+                children: [
+                  if (touch && stacked) Expanded(child: search) else search,
                   const SizedBox(width: 8),
                   SizedBox(
                     width: 106,
@@ -379,7 +552,7 @@ class _SavedMotionsState extends State<_SavedMotions> {
                   ),
                 ],
               );
-              if (constraints.maxWidth < 600) {
+              if (stacked) {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [heading, const SizedBox(height: 10), filters],
@@ -395,7 +568,7 @@ class _SavedMotionsState extends State<_SavedMotions> {
             },
           ),
           const SizedBox(height: 10),
-          if (state.playbackStatus != MotionPlaybackStatus.idle) ...[
+          if (!touch && state.playbackStatus != MotionPlaybackStatus.idle) ...[
             _PlaybackProgress(state: state),
             const SizedBox(height: 10),
           ],
@@ -413,6 +586,8 @@ class _SavedMotionsState extends State<_SavedMotions> {
                 style: _motionText(12, height: 16 / 12, color: _muted),
               ),
             )
+          else if (touch)
+            _MotionCards(state: state, controller: controller)
           else
             ConstrainedBox(
               constraints: BoxConstraints(
@@ -657,10 +832,17 @@ class _MotionCards extends StatelessWidget {
                   children: [
                     IconButton(
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints.tightFor(
-                        width: 28,
-                        height: 28,
+                      constraints: BoxConstraints.tightFor(
+                        width: AppLayout.landscapeOf(context)
+                            ? AppLayout.touchTarget
+                            : 28,
+                        height: AppLayout.landscapeOf(context)
+                            ? AppLayout.touchTarget
+                            : 28,
                       ),
+                      tooltip: motion.favorite
+                          ? 'Remove from favorites'
+                          : 'Add to favorites',
                       onPressed: () => controller.toggleFavorite(motion.id),
                       icon: Icon(
                         motion.favorite
@@ -1492,7 +1674,7 @@ class _SidebarHeading extends StatelessWidget {
           ),
         ),
       ),
-      if (trailing != null) trailing!,
+      ?trailing,
     ],
   );
 }
@@ -1676,8 +1858,8 @@ class _SquareAction extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(11),
         child: Container(
-          width: 40,
-          height: 40,
+          width: AppLayout.landscapeOf(context) ? AppLayout.touchTarget : 40,
+          height: AppLayout.landscapeOf(context) ? AppLayout.touchTarget : 40,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             border: Border.all(color: _outline),
@@ -1714,7 +1896,7 @@ class _GradientButton extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Ink(
-          height: 42,
+          height: AppLayout.landscapeOf(context) ? AppLayout.touchTarget : 42,
           width: expanded ? double.infinity : null,
           padding: const EdgeInsets.symmetric(horizontal: 18),
           decoration: BoxDecoration(
@@ -1781,7 +1963,7 @@ class _SoftButton extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: SizedBox(
-          height: 42,
+          height: AppLayout.landscapeOf(context) ? AppLayout.touchTarget : 42,
           width: expanded ? double.infinity : null,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1827,10 +2009,9 @@ class _CirclePlay extends StatelessWidget {
     child: InkWell(
       onTap: onTap,
       customBorder: const CircleBorder(),
-      child: const SizedBox(
-        width: 30,
-        height: 30,
-        child: Icon(Icons.play_arrow_rounded, size: 19, color: _purple),
+      child: SizedBox.square(
+        dimension: AppLayout.landscapeOf(context) ? 44 : 30,
+        child: const Icon(Icons.play_arrow_rounded, size: 19, color: _purple),
       ),
     ),
   );
@@ -1856,7 +2037,10 @@ class _LabeledControl extends StatelessWidget {
         ),
       ),
       const SizedBox(height: 5),
-      SizedBox(height: 36, child: child),
+      SizedBox(
+        height: AppLayout.landscapeOf(context) ? AppLayout.touchTarget : 36,
+        child: child,
+      ),
     ],
   );
 }
@@ -1876,7 +2060,7 @@ class _MotionDropdown<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    height: 36,
+    height: AppLayout.landscapeOf(context) ? AppLayout.touchTarget : 36,
     padding: const EdgeInsets.symmetric(horizontal: 10),
     decoration: BoxDecoration(
       color: Colors.white.withValues(alpha: 0.82),
@@ -1920,24 +2104,31 @@ class _MotionToggle extends StatelessWidget {
     toggled: value,
     child: GestureDetector(
       onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        width: 38,
-        height: 22,
-        padding: const EdgeInsets.all(3),
-        decoration: BoxDecoration(
-          color: value ? _purple : const Color(0xFFCED4E4),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: AnimatedAlign(
+      behavior: HitTestBehavior.opaque,
+      // Same switch, with a finger-sized hit area on phones.
+      child: Padding(
+        padding: AppLayout.landscapeOf(context)
+            ? const EdgeInsets.symmetric(horizontal: 5, vertical: 13)
+            : EdgeInsets.zero,
+        child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
-          alignment: value ? Alignment.centerRight : Alignment.centerLeft,
-          child: const DecoratedBox(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
+          width: 38,
+          height: 22,
+          padding: const EdgeInsets.all(3),
+          decoration: BoxDecoration(
+            color: value ? _purple : const Color(0xFFCED4E4),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: AnimatedAlign(
+            duration: const Duration(milliseconds: 160),
+            alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+            child: const DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+              child: SizedBox(width: 16, height: 16),
             ),
-            child: SizedBox(width: 16, height: 16),
           ),
         ),
       ),
@@ -1993,8 +2184,16 @@ class _TinyAction extends StatelessWidget {
     child: IconButton(
       onPressed: onTap,
       padding: EdgeInsets.zero,
-      constraints: const BoxConstraints.tightFor(width: 35, height: 31),
+      constraints: AppLayout.landscapeOf(context)
+          ? const BoxConstraints.tightFor(
+              width: AppLayout.touchTarget,
+              height: AppLayout.touchTarget,
+            )
+          : const BoxConstraints.tightFor(width: 35, height: 31),
       style: IconButton.styleFrom(
+        // The desktop row allocates 35 dp per action. Material's default
+        // 48 dp tap padding otherwise overflows its 190 dp actions column.
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         backgroundColor: danger ? _redSoft : const Color(0xFFF2F3FA),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),

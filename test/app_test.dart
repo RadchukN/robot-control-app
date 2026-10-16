@@ -4,11 +4,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:robot_control_app/app.dart';
 import 'package:robot_control_app/core/config/app_config.dart';
 import 'package:robot_control_app/core/theme/theme_provider.dart';
+import 'package:robot_control_app/features/dashboard/application/dashboard_controller.dart';
 import 'package:robot_control_app/services/robot_service.dart';
 
 import 'fixture_api_client.dart';
+import 'landscape/landscape_harness.dart' show RecordingRobot, loadRealFonts;
 
 void main() {
+  setUpAll(loadRealFonts);
   test('default configuration points to the local API', () {
     final container = ProviderContainer();
     addTearDown(container.dispose);
@@ -41,6 +44,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          dashboardControllerProvider.overrideWith(RecordingRobot.new),
           robotServiceProvider.overrideWithValue(
             RobotService(FixtureApiClient()),
           ),
@@ -60,7 +64,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Motion is ready for integration'), findsOneWidget);
+    expect(find.byKey(const Key('motion-screen')), findsOneWidget);
+    expect(find.text('Quick gestures'), findsOneWidget);
   });
 
   testWidgets('Dashboard fits all Figma reference viewports', (tester) async {
@@ -73,6 +78,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            dashboardControllerProvider.overrideWith(RecordingRobot.new),
             robotServiceProvider.overrideWithValue(
               RobotService(FixtureApiClient()),
             ),
@@ -104,6 +110,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            dashboardControllerProvider.overrideWith(RecordingRobot.new),
             robotServiceProvider.overrideWithValue(
               RobotService(FixtureApiClient()),
             ),

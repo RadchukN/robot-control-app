@@ -22,6 +22,7 @@ class DashboardController extends AsyncNotifier<DashboardData>
   bool _disposed = false;
   final _motionCommands = MotionCommandSession();
   final _audioFrames = StreamController<Map<String, dynamic>>.broadcast();
+  final _voiceFrames = StreamController<Map<String, dynamic>>.broadcast();
   final _telemetryHistory = <DashboardTelemetry>[];
   final _historySampleClock = Stopwatch();
   Completer<List<String>>? _catalogRequest;
@@ -154,6 +155,25 @@ class DashboardController extends AsyncNotifier<DashboardData>
 
   /// Incoming `medza.audio` frames from the robot socket.
   Stream<Map<String, dynamic>> get audioFrames => _audioFrames.stream;
+
+  /// Private voice responses are routed without logging their payloads.
+  Stream<Map<String, dynamic>> get voiceFrames => _voiceFrames.stream;
+
+  void sendVoiceFrame(Map<String, Object?> frame) {
+    if (!const {
+      'voice_get_capabilities',
+      'voice_get_status',
+      'voice_start',
+      'voice_stop',
+    }.contains(frame['type'])) {
+      throw ArgumentError('Unsupported voice request');
+    }
+    final channel = _telemetryChannel;
+    if (_disposed || !_authenticated || channel == null) {
+      throw StateError('Robot is not connected.');
+    }
+    channel.sink.add(jsonEncode(frame));
+  }
 
   /// Sends one `audio_*` frame on the existing authenticated socket.
   void sendAudioFrame(Map<String, Object?> frame) {
@@ -370,6 +390,10 @@ class DashboardController extends AsyncNotifier<DashboardData>
       }
       // medza.audio frames are additive: never motion results or telemetry.
       final type = decoded['type'];
+      if (type is String && type.startsWith('voice_')) {
+        if (_authenticated && !_voiceFrames.isClosed) _voiceFrames.add(decoded);
+        return;
+      }
       if (type is String && type.startsWith('audio_')) {
         if (!_audioFrames.isClosed) _audioFrames.add(decoded);
         return;
@@ -514,6 +538,7 @@ class DashboardController extends AsyncNotifier<DashboardData>
 
   void _dispose() {
     _audioFrames.close();
+    _voiceFrames.close();
     _connectionGeneration++;
     WidgetsBinding.instance.removeObserver(this);
     _freshnessTimer?.cancel();

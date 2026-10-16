@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:robot_control_app/features/voice_studio/application/voice_studio_providers.dart';
 import 'package:robot_control_app/features/voice_studio/data/voice_backend.dart';
+import 'package:robot_control_app/features/voice_studio/data/live_voice_backend.dart';
 import 'package:robot_control_app/features/voice_studio/domain/voice_models.dart';
 
 const defaultTtsMaxLength = 500;
@@ -136,7 +137,9 @@ class TextToSpeechController extends Notifier<TtsState> {
       phase: TtsPhase.idle,
       simulated: _backend.isSimulated,
       capabilities: capabilities,
-      unavailableReason: _backend.unavailableReason,
+      unavailableReason: _backend is LiveVoiceBackend
+          ? 'Live text-to-speech is not available in medza.voice v1.'
+          : _backend.unavailableReason,
       language: language,
       voice: capabilities?.voices[language]?.firstOrNull,
       speed: speeds.contains(1.0) ? 1.0 : speeds.firstOrNull,
