@@ -287,7 +287,7 @@ void main() {
 
   group('Live mode and disconnects', () {
     testWidgets(
-      'Demo Mode off uses the unavailable backend and sends nothing',
+      'Demo Mode off waits for authoritative backend status before enabling Start',
       (tester) async {
         final motionCalls = <String>[];
         final container = _container(motionCalls: motionCalls);
@@ -302,56 +302,60 @@ void main() {
 
         _link(container, RobotLinkStatus.connected);
         state = container.read(realtimeVoiceProvider);
-        expect(state.session, VoiceSessionState.idle);
+        expect(state.session, VoiceSessionState.disconnected);
         expect(state.microphone, DeviceStatus.unknown);
         expect(state.canStart, isFalse, reason: 'voice backend not supported');
 
         final tts = container.read(ttsProvider.notifier)..setDraft('Hello');
         expect(container.read(ttsProvider).capabilities, isNull);
         await tts.speak();
-        expect(
-          container.read(ttsProvider).lastError,
-          contains('not available'),
-        );
+        expect(container.read(ttsProvider).lastError, isNotEmpty);
         expect(motionCalls, isEmpty);
       },
     );
 
-    testWidgets('disconnect ends a live session and reconnect never restarts', (
-      tester,
-    ) async {
-      final backend = ScriptedVoiceBackend();
-      final container = _container(backend: backend);
-      addTearDown(container.dispose);
-      final voice = container.read(realtimeVoiceProvider.notifier);
-      RealtimeVoiceState read() => container.read(realtimeVoiceProvider);
+    testWidgets(
+      'disconnect retains uncertain audio ownership and reconnect never restarts',
+      (tester) async {
+        final backend = ScriptedVoiceBackend();
+        final container = _container(backend: backend);
+        addTearDown(container.dispose);
+        final voice = container.read(realtimeVoiceProvider.notifier);
+        RealtimeVoiceState read() => container.read(realtimeVoiceProvider);
 
-      expect(read().session, VoiceSessionState.disconnected);
-      _link(container, RobotLinkStatus.connected);
-      expect(read().canStart, isTrue);
-      await voice.start();
-      backend
-        ..emit(const VoiceSessionEvent(VoiceSessionState.listening))
-        ..emit(
-          const VoiceDeviceEvent(
-            microphone: DeviceStatus.ready,
-            speaker: DeviceStatus.ready,
-          ),
+        expect(read().session, VoiceSessionState.disconnected);
+        _link(container, RobotLinkStatus.connected);
+        backend.emit(const VoiceSessionEvent(VoiceSessionState.idle));
+        backend.emit(
+          const VoiceControlEvent(available: true, idle: true, canStop: false),
         );
-      expect(read().session, VoiceSessionState.listening);
-      expect(read().microphone, DeviceStatus.ready);
+        expect(read().canStart, isTrue);
+        await voice.start();
+        backend
+          ..emit(const VoiceSessionEvent(VoiceSessionState.listening))
+          ..emit(
+            const VoiceDeviceEvent(
+              microphone: DeviceStatus.ready,
+              speaker: DeviceStatus.ready,
+            ),
+          );
+        expect(read().session, VoiceSessionState.listening);
+        expect(read().microphone, DeviceStatus.ready);
 
-      _link(container, RobotLinkStatus.disconnected);
-      expect(read().session, VoiceSessionState.disconnected);
-      expect(read().microphone, DeviceStatus.unavailable);
-      expect(container.read(audioSessionProvider), AudioOwner.none);
-      backend.emit(const VoiceSessionEvent(VoiceSessionState.speaking));
-      expect(read().session, VoiceSessionState.disconnected);
+        _link(container, RobotLinkStatus.disconnected);
+        expect(read().session, VoiceSessionState.disconnected);
+        expect(read().microphone, DeviceStatus.unavailable);
+        expect(container.read(audioSessionProvider), AudioOwner.realtime);
+        backend.emit(const VoiceSessionEvent(VoiceSessionState.speaking));
+        expect(read().session, VoiceSessionState.disconnected);
 
-      _link(container, RobotLinkStatus.connected);
-      expect(read().session, VoiceSessionState.idle);
-      expect(backend.calls, ['start'], reason: 'no automatic replay');
-    });
+        _link(container, RobotLinkStatus.connected);
+        expect(read().session, VoiceSessionState.disconnected);
+        backend.emit(const VoiceSessionEvent(VoiceSessionState.idle));
+        expect(read().session, VoiceSessionState.idle);
+        expect(backend.calls, ['start'], reason: 'no automatic replay');
+      },
+    );
 
     testWidgets('late activity after Stop cannot reopen the session', (
       tester,
@@ -361,6 +365,9 @@ void main() {
       addTearDown(container.dispose);
       _link(container, RobotLinkStatus.connected);
       final voice = container.read(realtimeVoiceProvider.notifier);
+      backend.emit(
+        const VoiceControlEvent(available: true, idle: true, canStop: false),
+      );
       await voice.start();
       backend.emit(const VoiceSessionEvent(VoiceSessionState.listening));
       await voice.stop();

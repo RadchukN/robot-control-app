@@ -79,7 +79,7 @@ class VoiceStudioScreen extends ConsumerWidget {
             notifications().warning(
               'Voice disconnected',
               description:
-                  'The robot link dropped. Start again when it returns.',
+                  'The robot link dropped. Checking the previous session after reconnecting.',
               key: key,
             );
           default:
@@ -130,7 +130,7 @@ class VoiceStudioScreen extends ConsumerWidget {
           demo ? 'Demo Mode on' : 'Demo Mode off',
           description: demo
               ? 'Voice and TTS are simulated. Nothing is sent to the robot.'
-              : 'The robot voice backend is not available yet.',
+              : 'Checking the robot voice backend. Start requires available and idle status.',
           key: 'voice-mode',
         );
       })
@@ -474,6 +474,7 @@ class _StudioHeader extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final demo = ref.watch(voiceDemoModeProvider);
+    final voice = ref.watch(realtimeVoiceProvider);
     final title = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -514,7 +515,10 @@ class _StudioHeader extends ConsumerWidget {
             key: const Key('voice-demo-toggle'),
             value: demo,
             activeTrackColor: _purple,
-            onChanged: ref.read(voiceDemoModeProvider.notifier).set,
+            // Keep live Stop accessible until the observed session is terminal.
+            onChanged: !demo && voice.canStop
+                ? null
+                : ref.read(voiceDemoModeProvider.notifier).set,
           ),
         ],
       ),

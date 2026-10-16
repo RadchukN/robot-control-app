@@ -40,6 +40,8 @@ class _ConnectionPanelState extends ConsumerState<_ConnectionPanel> {
         'Voice backend',
         voice.simulated
             ? ('Demo (mock backend)', _Tone.demo)
+            : voice.backendAvailable
+            ? ('Available', _Tone.connected)
             : ('Unavailable', _Tone.unavailable),
       ),
       (

@@ -4,6 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:robot_control_app/features/voice_studio/application/voice_studio_providers.dart';
 import 'package:robot_control_app/features/voice_studio/data/voice_backend.dart';
+import 'package:robot_control_app/features/voice_studio/data/live_voice_backend.dart';
+import 'package:robot_control_app/features/settings/application/audio_devices_controller.dart';
+import 'package:robot_control_app/features/settings/data/audio_device_backend.dart';
 import 'package:robot_control_app/features/voice_studio/domain/transcript_buffer.dart';
 import 'package:robot_control_app/features/voice_studio/domain/voice_models.dart';
 import 'package:robot_control_app/services/robot_connection.dart';
@@ -22,6 +25,9 @@ class RealtimeVoiceState {
     required this.linkConnected,
     this.unavailableReason,
     this.lastError,
+    this.backendAvailable = false,
+    this.backendIdle = false,
+    this.liveCanStop = false,
   });
 
   static const waveformSamples = 48;
@@ -37,13 +43,21 @@ class RealtimeVoiceState {
   final bool linkConnected;
   final String? unavailableReason;
   final String? lastError;
+  final bool backendAvailable;
+  final bool backendIdle;
+  final bool liveCanStop;
 
   bool get canStart =>
       !session.isActive &&
       session != VoiceSessionState.stopping &&
-      (simulated || (linkConnected && unavailableReason == null));
+      (simulated || (linkConnected && backendAvailable && backendIdle));
 
-  bool get canStop => session.isActive;
+  bool get canStop => simulated
+      ? session.isActive || session == VoiceSessionState.stopping
+      : liveCanStop ||
+            session.isActive ||
+            session == VoiceSessionState.stopping ||
+            (session == VoiceSessionState.error && linkConnected);
 
   String get transcriptText => TranscriptBuffer.format(transcript);
 
@@ -55,6 +69,10 @@ class RealtimeVoiceState {
     List<TranscriptEntry>? transcript,
     bool? linkConnected,
     Object? lastError = _unset,
+    Object? unavailableReason = _unset,
+    bool? backendAvailable,
+    bool? backendIdle,
+    bool? liveCanStop,
   }) => RealtimeVoiceState(
     session: session ?? this.session,
     microphone: microphone ?? this.microphone,
@@ -63,7 +81,12 @@ class RealtimeVoiceState {
     transcript: transcript ?? this.transcript,
     simulated: simulated,
     linkConnected: linkConnected ?? this.linkConnected,
-    unavailableReason: unavailableReason,
+    unavailableReason: identical(unavailableReason, _unset)
+        ? this.unavailableReason
+        : unavailableReason as String?,
+    backendAvailable: backendAvailable ?? this.backendAvailable,
+    backendIdle: backendIdle ?? this.backendIdle,
+    liveCanStop: liveCanStop ?? this.liveCanStop,
     lastError: identical(lastError, _unset)
         ? this.lastError
         : lastError as String?,
@@ -81,11 +104,15 @@ bool isRobotLinkOpen(RobotLinkStatus status) => const {
 class RealtimeVoiceController extends Notifier<RealtimeVoiceState> {
   late VoiceBackend _backend;
   late TranscriptBuffer _transcript;
+  bool _inputFailed = false;
+  bool _outputFailed = false;
 
   @override
   RealtimeVoiceState build() {
     _backend = ref.watch(voiceBackendProvider);
     _transcript = TranscriptBuffer();
+    _inputFailed = false;
+    _outputFailed = false;
     final subscription = _backend.events.listen(_onEvent);
     ref.onDispose(subscription.cancel);
     ref.listen(
@@ -94,6 +121,9 @@ class RealtimeVoiceController extends Notifier<RealtimeVoiceState> {
     );
     final linked = isRobotLinkOpen(ref.read(robotLinkProvider).status);
     final simulated = _backend.isSimulated;
+    if (_backend is LiveVoiceBackend) {
+      ref.listen(audioDevicesProvider, (_, devices) => _onDevices(devices));
+    }
     return RealtimeVoiceState(
       session: simulated || linked
           ? VoiceSessionState.idle
@@ -114,6 +144,26 @@ class RealtimeVoiceController extends Notifier<RealtimeVoiceState> {
       ? DeviceStatus.unknown
       : DeviceStatus.unavailable;
 
+  void _onDevices(AudioDevicesState devices) {
+    if (!ref.mounted || !state.linkConnected) return;
+    final status = devices.status;
+    DeviceStatus selection(AudioSelection? selection) =>
+        switch (selection?.status) {
+          AudioSelectionStatus.connected => DeviceStatus.ready,
+          AudioSelectionStatus.disconnected => DeviceStatus.unavailable,
+          _ => DeviceStatus.unknown,
+        };
+    // A discovered sink must not erase an actual capture/playback failure.
+    state = state.copyWith(
+      microphone: _inputFailed || status?.session.inputLost == true
+          ? DeviceStatus.unavailable
+          : selection(status?.input),
+      speaker: _outputFailed
+          ? DeviceStatus.unavailable
+          : selection(status?.output),
+    );
+  }
+
   void _log(String message, {VoiceLogLevel level = VoiceLogLevel.info}) => ref
       .read(voiceEventLogProvider.notifier)
       .add(message, level: level, simulated: state.simulated);
@@ -131,6 +181,8 @@ class RealtimeVoiceController extends Notifier<RealtimeVoiceState> {
       _log('Conversation blocked: speaker busy', level: VoiceLogLevel.warning);
       return;
     }
+    _inputFailed = false;
+    _outputFailed = false;
     state = state.copyWith(
       session: VoiceSessionState.starting,
       lastError: null,
@@ -156,7 +208,15 @@ class RealtimeVoiceController extends Notifier<RealtimeVoiceState> {
     if (!state.canStop) return;
     state = state.copyWith(session: VoiceSessionState.stopping);
     _log('Stopping AI conversation');
-    await _backend.stopConversation();
+    try {
+      await _backend.stopConversation();
+    } on Object {
+      if (!ref.mounted) return;
+      state = state.copyWith(
+        session: VoiceSessionState.error,
+        lastError: 'Stop could not be confirmed. Try Stop after reconnecting.',
+      );
+    }
   }
 
   void clearTranscript() {
@@ -172,12 +232,14 @@ class RealtimeVoiceController extends Notifier<RealtimeVoiceState> {
       return;
     }
     if (!linked) {
-      _audio.release(AudioOwner.realtime);
+      if (!state.canStop) _audio.release(AudioOwner.realtime);
       state = state.copyWith(
         linkConnected: false,
         session: VoiceSessionState.disconnected,
         microphone: DeviceStatus.unavailable,
         speaker: DeviceStatus.unavailable,
+        backendAvailable: false,
+        backendIdle: false,
         waveform: List.filled(RealtimeVoiceState.waveformSamples, 0),
       );
       _log('Voice disconnected with robot link', level: VoiceLogLevel.error);
@@ -186,9 +248,7 @@ class RealtimeVoiceController extends Notifier<RealtimeVoiceState> {
     // Reconnect never restarts a conversation by itself.
     state = state.copyWith(
       linkConnected: true,
-      session: state.session == VoiceSessionState.disconnected
-          ? VoiceSessionState.idle
-          : state.session,
+      // Keep reconnecting until an authoritative voice_status arrives.
       microphone: DeviceStatus.unknown,
       speaker: DeviceStatus.unknown,
     );
@@ -209,11 +269,19 @@ class RealtimeVoiceController extends Notifier<RealtimeVoiceState> {
         state = state.copyWith(waveform: samples);
       case VoiceDeviceEvent(:final microphone, :final speaker):
         state = state.copyWith(
-          microphone: _device(microphone),
-          speaker: _device(speaker),
+          microphone: _inputFailed
+              ? DeviceStatus.unavailable
+              : _device(microphone),
+          speaker: _outputFailed ? DeviceStatus.unavailable : _device(speaker),
         );
       case VoiceErrorEvent(:final code, :final message):
-        _audio.release(AudioOwner.realtime);
+        if (code == 'input_lost' || code == 'microphone_lost') {
+          _inputFailed = true;
+        }
+        if (code == 'bluetooth_unavailable' || code == 'output_error') {
+          _outputFailed = true;
+        }
+        if (!state.liveCanStop) _audio.release(AudioOwner.realtime);
         state = state.copyWith(
           session: VoiceSessionState.error,
           lastError: '$code: $message',
@@ -221,6 +289,20 @@ class RealtimeVoiceController extends Notifier<RealtimeVoiceState> {
         _log('Voice error $code: $message', level: VoiceLogLevel.error);
       case TtsStatusEvent():
         return;
+      case VoiceControlEvent(
+        :final available,
+        :final idle,
+        :final canStop,
+        :final reason,
+      ):
+        if (idle) _audio.release(AudioOwner.realtime);
+        if (canStop) _audio.acquire(AudioOwner.realtime);
+        state = state.copyWith(
+          backendAvailable: available,
+          backendIdle: idle,
+          liveCanStop: canStop,
+          unavailableReason: reason,
+        );
     }
   }
 
@@ -235,7 +317,8 @@ class RealtimeVoiceController extends Notifier<RealtimeVoiceState> {
     if (current == next) return;
     // Late activity after Stop must not reopen the session.
     if (current == VoiceSessionState.stopping && next.isActive) return;
-    if (current == VoiceSessionState.disconnected) return;
+    if (state.simulated && current == VoiceSessionState.disconnected) return;
+    if (!state.simulated && !state.linkConnected) return;
     final ended = const {
       VoiceSessionState.idle,
       VoiceSessionState.error,
@@ -249,6 +332,9 @@ class RealtimeVoiceController extends Notifier<RealtimeVoiceState> {
           : null,
       lastError: next == VoiceSessionState.error ? message : null,
     );
+    if (_backend is LiveVoiceBackend && next == VoiceSessionState.listening) {
+      _onDevices(ref.read(audioDevicesProvider));
+    }
     _log(
       'Voice session: ${next.name}${message == null ? '' : ' — $message'}',
       level: next == VoiceSessionState.error
